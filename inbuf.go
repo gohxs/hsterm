@@ -32,6 +32,7 @@ func (ib *InputBuffer) WriteRune(r rune) {
 	ib.cursIndex++
 }
 
+//Clear - it clears everything from the buffer
 func (ib *InputBuffer) Clear() { // What? all?
 	ib.buf = []string{""}
 	ib.curLine = 0

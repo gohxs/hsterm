@@ -4,7 +4,6 @@
 package hsterm
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
@@ -13,14 +12,14 @@ import (
 	"os"
 	"unicode"
 
+	"github.com/gohxs/hsterm/internal/ansireader"
 	"github.com/gohxs/hsterm/internal/term"
 	"github.com/gohxs/prettylog"
-	"golang.org/x/crypto/ssh/terminal"
 )
 
 var (
 	ErrInterrupt = errors.New("Interrupt")
-	log          = prettylog.New("hsterm")
+	log          = prettylog.New("hsterm", Stdout)
 	flog         *glog.Logger
 )
 
@@ -53,18 +52,27 @@ type Term struct {
 	Display      func(string) string
 	AutoComplete func(line string, pos int, key rune) (newLine string, newPos int, ok bool)
 
+	dispbuf bytes.Buffer
+
 	tstate *term.State
-	inFile *os.File // io.Reader
+	inFile io.Reader
+	//inFile *os.File // io.Reader
 	io.Writer
 }
 
 //New instantiates a new Terminal handler
 func New() *Term {
-	frd := os.Stdin
 
-	state, _ := term.MakeRaw(int(frd.Fd()))
+	inFile := Stdin
+	outFile := Stdout
 
-	width, _, err := term.GetSize(int(frd.Fd()))
+	// For windows only
+	//inFD := syscall.STD_INPUT_HANDLE
+	//outFD := syscall.STD_OUTPUT_HANDLE
+
+	state, _ := term.MakeRaw(int(term.GetStdin()))
+	width := term.GetScreenWidth()
+
 	log.Println("Terminal is:", width, "Wide")
 
 	ret := &Term{
@@ -77,8 +85,8 @@ func New() *Term {
 		Display:      nil,
 		AutoComplete: nil,
 		tstate:       state,
-		inFile:       frd,
-		Writer:       os.Stdout, // TODO: for now
+		inFile:       inFile,
+		Writer:       outFile, // TODO: for now
 	}
 	f, err := os.OpenFile("out.txt", os.O_APPEND|os.O_WRONLY, os.FileMode(0644))
 	if err != nil {
@@ -88,8 +96,9 @@ func New() *Term {
 	return ret
 }
 
+// Close and restore terminal state
 func (t *Term) Close() {
-	term.Restore(int(t.inFile.Fd()), t.tstate)
+	term.Restore(int(term.GetStdin()), t.tstate)
 }
 
 func (t *Term) Write(b []byte) (n int, err error) {
@@ -115,20 +124,20 @@ func (t *Term) Readline() (string, error) {
 	//defer term.Restore(int(t.inFile.Fd()), state)
 
 	// Some way to set this
-	if !terminal.IsTerminal(int(frd.Fd())) {
+	/*if !term.IsTerminal(int(Stdin.Fd())) {
 		rd := bufio.NewScanner(frd)
 		for rd.Scan() {
 			curString := rd.Text()
 			return curString, nil
 		}
-	}
+	}*/
 
 	// TODO: Wrong should go back to previous position, because on wrap it breaks
 	// the output
 	//wr.Write([]byte("\r" + t.prompt)) // restore cursor and print prompt?
 	// Read command etcetc
 	//tin := make([]byte, 128)
-	rinput := NewReader(frd)
+	rinput := ansireader.New(frd)
 	//rd := bufio.NewReader(frd)
 	for {
 		val, err := rinput.Read()
@@ -137,13 +146,13 @@ func (t *Term) Readline() (string, error) {
 			break
 		}
 
-		switch val.ch {
-		case CharEOT:
+		switch val.Ch {
+		case ansireader.CharEOT:
 			t.ClearDisplay() // Debug
 			continue
-		case CharInterrupt:
+		case ansireader.CharInterrupt:
 			return "", ErrInterrupt // Interrupt return
-		case CharCtrlJ, CharEnter: // Carriage return followed by \n i supose
+		case ansireader.CharCtrlJ, ansireader.CharEnter: // Carriage return followed by \n i supose
 			//t.ResetCursor()
 			t.Writer.Write([]byte("\n")) // output
 			if t.inbuf.Len() != 0 {      // process
@@ -162,21 +171,22 @@ func (t *Term) Readline() (string, error) {
 		}
 
 		t.ClearDisplay()
-		switch val.ch {
-		case CharCtrlL:
+		switch val.Ch {
+		case ansireader.CharCtrlL:
 			t.Writer.Write([]byte("\033[2J\033[H")) // Clear
-		case CharDelete: // Escape key delete
+		case ansireader.CharDelete: // Escape key delete
 			t.inbuf.Delete()
-		case CharBackspace:
+		case ansireader.CharBackspace, 8:
+			log.Println("Backspace")
 			t.inbuf.Backspace()
-		case CharPrev:
+		case ansireader.CharPrev:
 			t.histindex--
 			if t.histindex < 0 {
 				t.histindex = 0
 			} else {
 				t.inbuf.Set(t.history[t.histindex])
 			}
-		case CharNext:
+		case ansireader.CharNext:
 			t.histindex++
 			if t.histindex >= len(t.history) { // Clear input if above the len
 				t.histindex = len(t.history)
@@ -184,14 +194,14 @@ func (t *Term) Readline() (string, error) {
 			} else {
 				t.inbuf.Set(t.history[t.histindex])
 			}
-		case CharBackward:
+		case ansireader.CharBackward:
 			t.inbuf.CursorLeft()
-		case CharForward:
+		case ansireader.CharForward:
 			t.inbuf.CursorRight()
 		default: // Function that actually adds the text
 			// Go through auto complete
 			if t.AutoComplete != nil {
-				newLine, newPos, ok := t.AutoComplete(t.inbuf.String(), t.inbuf.Cursor(), val.ch)
+				newLine, newPos, ok := t.AutoComplete(t.inbuf.String(), t.inbuf.Cursor(), val.Ch)
 				if ok {
 					t.inbuf.Set(newLine) // Reset print here?
 					log.Println("NewPos:", newPos)
@@ -199,18 +209,18 @@ func (t *Term) Readline() (string, error) {
 					break
 				}
 			}
-			if !unicode.IsPrint(val.ch) { // Unhandled char
-				log.Printf("b[%d] %v\n", 1, val.ch) // Print unprintable char
+			if !unicode.IsPrint(val.Ch) { // Unhandled char
+				log.Printf("b[%d] %v\n", 1, val.Ch) // Print unprintable char
 				break
 			}
-			t.inbuf.WriteRune(val.ch)
+			t.inbuf.WriteRune(val.Ch)
 		}
 		t.RefreshDisplay()
 	}
 	return "", nil
 }
 
-//Clears the prompt display
+//ClearDisplay clears the prompt display
 func (t *Term) ClearDisplay() { // OrClear?
 	var (
 		lWidth  = t.width
@@ -219,11 +229,14 @@ func (t *Term) ClearDisplay() { // OrClear?
 	)
 	lineLen := lBuf + lPrompt
 	count := (lineLen) / lWidth
+
+	t.dispbuf.Reset()
 	if count > 0 {
-		//t.Writer.Write([]byte(strings.Repeat("\r\033[K\033[A\033[K", count))) // clear and moveup?
-		t.Writer.Write([]byte(fmt.Sprintf("\033[%dA\r\033[J", count))) // clear and moveup?
+		//t.dispbuf.WriteString(strings.Repeat("\033[2K\r\033[A", count)) // clear and moveup?
+		//t.dispbuf.WriteString("\033[2K")                                // clear and moveup?
+		t.dispbuf.Write([]byte(fmt.Sprintf("\033[%dA\r\033[J", count))) // clear and moveup?
 	} else {
-		t.Writer.Write([]byte(fmt.Sprintf("\r\033[J"))) // clear and moveup?
+		t.dispbuf.Write([]byte(fmt.Sprintf("\r\033[J"))) // clear and moveup?
 	}
 }
 
@@ -238,21 +251,21 @@ func (t *Term) RefreshDisplay() {
 	} else {
 		dispBuf = t.inbuf.String()
 	}
-	out := bytes.NewBuffer(nil)
 	// Calculate cursor index for print
 
-	out.WriteString(fmt.Sprintf("\r%s%s \b\033[K", t.prompt, dispBuf))
+	//TODO: Disable cursor, print move enable enable
+	t.dispbuf.WriteString(fmt.Sprintf("\r%s%s \b", t.prompt, dispBuf)) // Erase after?
 
 	// Position cursor
 	// Cur left and up if any? of current line?
+	// Disable this for now?
 	dispLen := t.inbuf.Len()
 	curLeft := (dispLen - t.inbuf.Cursor())
-	//log.Println("CurLeft:", curLeft, dispLen, t.inbuf.Cursor())
-	// Move cursor to where it belong??
-	// After print we can reset Pos, move back and forward
 	if curLeft != 0 && dispLen > 0 {
-		out.WriteString(fmt.Sprintf("\033[%dD", curLeft)) // ? huh
+		t.dispbuf.WriteString(fmt.Sprintf("\033[%dD", curLeft)) // ? huh
 	}
-	t.Writer.Write(out.Bytes())
+
+	t.Writer.Write(t.dispbuf.Bytes()) // flush
+	t.dispbuf.Reset()
 
 }

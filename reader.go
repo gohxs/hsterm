@@ -1,5 +1,10 @@
 package hsterm
 
+////////////////////
+// this is suposed to be an ansi reader
+// which returns an array of Ansi values
+//
+//
 import (
 	"bufio"
 	"bytes"
@@ -30,6 +35,7 @@ func NewReader(rd io.Reader) *Reader {
 	return &Reader{bufio.NewReader(rd)}
 }
 
+// ReadOne
 func (r Reader) Read() (Value, error) {
 	ch, _, err := r.breader.ReadRune()
 	if err != nil {
@@ -41,9 +47,7 @@ func (r Reader) Read() (Value, error) {
 		//log.Println("Char is esc, Reading next")
 		echar, _, _ := r.breader.ReadRune() // NextRune
 		return r.escapeKey(echar), nil
-
 	}
-
 	return Value{ch: ch}, nil
 }
 
@@ -81,6 +85,7 @@ func (r Reader) escapeExKey(key *escapeKeyPair) rune {
 	return ch
 }
 
+// Better escape thing
 type escapeKeyPair struct {
 	attr string
 	typ  rune
