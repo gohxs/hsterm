@@ -1,19 +1,39 @@
 package main
 
 import (
-	"log"
-	"os"
+	"fmt"
+	"io"
 
-	"github.com/gohxs/hsterm/internal/ansireader"
+	"github.com/gohxs/hsterm/ansireader"
 )
 
 func main() {
 
-	rd := ansireader.New(os.Stdin)
+	done := make(chan struct{})
 
-	for {
-		v, _ := rd.Read()
-		log.Printf("Value: %#v", v)
-	}
+	reader, writer := io.Pipe()
+	go func() {
+		data := make([]byte, 64)
+		areader := ansireader.New(reader)
+		for { // Do whatever parse the things whatever
+			n, err := areader.Read(data) // Just echo
+			fmt.Print(string(data[:n]))  // Echoer
+
+			if err != nil {
+				close(done)
+				return
+			}
+		}
+	}()
+
+	//rd := ansireader.New(os.Stdin)
+	//
+	toWrite := "\033[01;43mThis should be a thing\033[m"
+	fmt.Println(toWrite)
+
+	fmt.Fprintln(writer, toWrite)
+	writer.Close()
+
+	<-done
 
 }

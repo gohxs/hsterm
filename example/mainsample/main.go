@@ -46,7 +46,7 @@ func main() {
 	log.Println("Hello world")
 	rl := hsterm.New()
 	rl.AutoComplete = completeFunc
-	rl.Display = display
+	//rl.Display = display
 	rl.SetPrompt("stdio@hsterm ~$ ")
 	log.SetFlags(0)
 

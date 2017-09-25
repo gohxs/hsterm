@@ -4,31 +4,30 @@
 package hsterm
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	glog "log"
 	"os"
+	"strings"
+	"sync"
+	"time"
 	"unicode"
+	"unicode/utf8"
 
-	"github.com/gohxs/hsterm/internal/ansireader"
-	"github.com/gohxs/hsterm/internal/term"
+	"github.com/gohxs/hsterm/ansi"
+	"github.com/gohxs/hsterm/term"
 	"github.com/gohxs/prettylog"
 )
 
 var (
+	// ErrInterrupt Interrupt called
 	ErrInterrupt = errors.New("Interrupt")
-	log          = prettylog.New("hsterm", Stdout)
-	flog         *glog.Logger
-)
-
-const (
-	chCtrlC     = 3
-	chBackspace = 8
-	chDelete    = 127
-	chTab       = 9
-	chEsc       = 27
+	// Local logger
+	log         = glog.New(os.Stderr, "", 0)
+	DebugOutput = ""
 )
 
 // TermFunc callback for receiving a command
@@ -36,236 +35,357 @@ const (
 
 // Term main var
 type Term struct {
-	inbuf *InputBuffer
-	//rbuf      string
-	//cursIndex int
-	prompt string
-
-	width int
-
-	// History class somewhere
-	histindex int
-	history   []string
-
-	// Callbacks
-	Logger       *glog.Logger
 	Display      func(string) string
 	AutoComplete func(line string, pos int, key rune) (newLine string, newPos int, ok bool)
+	// Internals
+	history History
+	inbuf   *InputBuffer
+	prompt  string
+	width   int
 
-	dispbuf bytes.Buffer
-
+	out    bytes.Buffer // Buffered output
 	tstate *term.State
-	inFile io.Reader
+
+	reading bool
+	addLine int
+
+	Reader io.Reader
+	Writer io.Writer
+	// Stderr in future
+
 	//inFile *os.File // io.Reader
-	io.Writer
+	//m sync.Mutex
 }
 
 //New instantiates a new Terminal handler
 func New() *Term {
 
-	inFile := Stdin
-	outFile := Stdout
+	inFile := term.Stdin
+	outFile := term.Stdout
 
 	// For windows only
 	//inFD := syscall.STD_INPUT_HANDLE
 	//outFD := syscall.STD_OUTPUT_HANDLE
 
-	state, _ := term.MakeRaw(int(term.GetStdin()))
-	width := term.GetScreenWidth()
-
-	log.Println("Terminal is:", width, "Wide")
-
 	ret := &Term{
-		inbuf:        NewInputBuffer(),
-		prompt:       "",
-		width:        width,
-		histindex:    0,
-		history:      []string{},
-		Logger:       prettylog.Dummy(),
 		Display:      nil,
 		AutoComplete: nil,
-		tstate:       state,
-		inFile:       inFile,
-		Writer:       outFile, // TODO: for now
+		// Internals
+		inbuf:   NewInputBuffer(),
+		prompt:  "",
+		width:   term.GetScreenWidth(),
+		history: History{},
+
+		Reader: inFile,  // Reader
+		Writer: outFile, // TODO: for now
+		//m:      sync.Mutex{},
 	}
-	f, err := os.OpenFile("out.txt", os.O_APPEND|os.O_WRONLY, os.FileMode(0644))
-	if err != nil {
-		panic(err)
+
+	{ // Advancing log/tmux helper
+		log.Println("Opening the thing")
+		f, err := os.OpenFile(DebugOutput, os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.FileMode(0644))
+		if err != nil {
+			panic(err)
+		}
+		log = prettylog.New("", f) // Debug logger
+		ret.history.Append("llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll")
 	}
-	log = prettylog.New("Term", &WriteFlush{f})
 	return ret
 }
 
-// Close and restore terminal state
-func (t *Term) Close() {
-	term.Restore(int(term.GetStdin()), t.tstate)
-}
-
+// can be calledi n other thread and a Flush triggered
 func (t *Term) Write(b []byte) (n int, err error) {
+	if len(b) == 0 {
+		return 0, nil
+	}
+	/*t.m.Lock()
+	defer t.m.Unlock()*/
+	// Write to temporary buffer
+	t.addLine = 0
+	if b[len(b)-1] != '\n' { // Write enter if inexistent
+		t.addLine = 1
+	}
+
+	if !t.reading { // Pure write
+		n, err = t.out.Write(b)
+		t.Flush()
+		return
+	}
+
 	buf := bytes.NewBuffer(nil)
-	buf.WriteString("\r\033[2K") // Go back? and clear rest of line
-	// Go up and back, print, and comeback
-	n, err = buf.Write(b) // Print content
-	t.Writer.Write(buf.Bytes())
-	t.RefreshDisplay() // do not reset position
+	ab := ansi.NewWriter(buf)
+
+	ab.RestoreCursor()
+	ab.WriteString("\033[K") // Clear after restore
+	ab.Write(b)
+	if len(b) == 1 {
+		ab.WriteString(" \b")
+	}
+
+	ab.SaveCursor()
+
+	ab.WriteString(t.PromptString())
+	// Finish
+	t.out.Write(buf.Bytes())
+	t.Flush()
+
 	return
 }
 
-// Prompt sets the terminal prompt
-func (t *Term) Prompt(p string) {
+// SetPrompt sets the terminal prompt
+func (t *Term) SetPrompt(p string) {
 	t.prompt = p
 }
 
-// Readline readline readline
-func (t *Term) Readline() (string, error) {
-	//wr := os.Stdout
-	frd := t.inFile
+// ReadLine will wait for further input until results is satisfie
+// (i.e: a line is readed)
+func (t *Term) ReadLine() (string, error) {
 
-	//defer term.Restore(int(t.inFile.Fd()), state)
+	ifile, ok := t.Reader.(*os.File)
+	if !ok || (ok && !term.IsTerminal(int(ifile.Fd()))) {
+		reader := bufio.NewReader(t.Reader)
+		buf, _, err := reader.ReadLine()
+		return string(buf), err
+	}
+	// It is a file
+	state, err := term.MakeRaw(int(ifile.Fd()))
+	if err != nil {
+		panic(err)
+	}
 
-	// Some way to set this
-	/*if !term.IsTerminal(int(Stdin.Fd())) {
-		rd := bufio.NewScanner(frd)
-		for rd.Scan() {
-			curString := rd.Text()
-			return curString, nil
-		}
-	}*/
+	defer term.Restore(int(ifile.Fd()), state)
 
-	// TODO: Wrong should go back to previous position, because on wrap it breaks
-	// the output
-	//wr.Write([]byte("\r" + t.prompt)) // restore cursor and print prompt?
-	// Read command etcetc
-	//tin := make([]byte, 128)
-	rinput := ansireader.New(frd)
-	//rd := bufio.NewReader(frd)
+	//	t.m.Lock()
+	{
+		t.out.WriteString("\033[s") // Save cursor now?
+		t.out.WriteString(t.PromptString())
+		t.Flush()
+	}
+	//	t.m.Unlock()
+
+	t.reading = true
+	defer func() { t.reading = false }()
+
+	rinput := ansi.NewReader(t.Reader)
 	for {
-		val, err := rinput.Read()
+		t.width = term.GetScreenWidth() // Here?
+		val, err := rinput.ReadEscape()
 		if err != nil {
-			//log.Println("Error ocurred reading fd", err, " ilen", len(input))
-			break
+			return "", err
 		}
+		// Do some keyMapping, (i.e: MoveNext: "\t")
 
-		switch val.Ch {
-		case ansireader.CharEOT:
-			t.ClearDisplay() // Debug
+		// Non clear
+		switch val.Value {
+		case "\x15": // CtrlU
+			t.Write([]byte("\033[H"))
+		case "\x0C": // CtrlL
+			ab := ansi.NewWriter(&t.out)
+			ab.WriteString("\033[2J\033[H") // Clear and save?
+			ab.SaveCursor()
+			t.Flush()
+			//continue
+		case "\x04": //EOT // CtrlD
+			//t.ClearPrompt()
+			t.out.WriteString(t.PromptString()) // Get String
 			continue
-		case ansireader.CharInterrupt:
+		case "\x03": // CtrlC
 			return "", ErrInterrupt // Interrupt return
-		case ansireader.CharCtrlJ, ansireader.CharEnter: // Carriage return followed by \n i supose
-			//t.ResetCursor()
-			t.Writer.Write([]byte("\n")) // output
-			if t.inbuf.Len() != 0 {      // process
-				t.history = append(t.history, t.inbuf.String())
-				t.histindex = len(t.history)
-
-				line := t.inbuf.String()
-				t.inbuf.Clear()
-
-				t.RefreshDisplay() // Output the prompt etc
-
-				return line, nil
-				// Process callbacks
+		case "\r", "\n": // ENTER COMPLETE enter // Process input
+			// Process thing somewhere else
+			t.inbuf.CursorToEnd() // Index to end of prompt what if?
+			//			t.m.Lock()
+			{
+				t.addLine = 0
+				t.out.WriteString("\n")             // Line feed directly
+				ansi.NewWriter(&t.out).SaveCursor() // ansi for just save cursor?
+				t.Flush()                           // Send to terminal
 			}
-			t.RefreshDisplay()
+			//			t.m.Unlock()
+			if t.inbuf.Len() == 0 {
+				t.out.WriteString(t.PromptString()) // Reprint prompt
+				t.Flush()                           // Send to terminal
+				continue
+			}
+			// Append history
+			t.history.Append(t.inbuf.String())
+
+			line := t.inbuf.String()
+			t.inbuf.Clear()
+			//log.Println("Return line")
+			return line, nil
 		}
 
-		t.ClearDisplay()
-		switch val.Ch {
-		case ansireader.CharCtrlL:
-			t.Writer.Write([]byte("\033[2J\033[H")) // Clear
-		case ansireader.CharDelete: // Escape key delete
+		//t.RestoreCursor()
+		switch val.Value {
+		case "\033[3~": // Escape key delete Weird keys
 			t.inbuf.Delete()
-		case ansireader.CharBackspace, 8:
-			log.Println("Backspace")
+		case "\b", "\x7f":
 			t.inbuf.Backspace()
-		case ansireader.CharPrev:
-			t.histindex--
-			if t.histindex < 0 {
-				t.histindex = 0
-			} else {
-				t.inbuf.Set(t.history[t.histindex])
-			}
-		case ansireader.CharNext:
-			t.histindex++
-			if t.histindex >= len(t.history) { // Clear input if above the len
-				t.histindex = len(t.history)
-				t.inbuf.Clear()
-			} else {
-				t.inbuf.Set(t.history[t.histindex])
-			}
-		case ansireader.CharBackward:
+		case "\033[A":
+			t.inbuf.Set(t.history.Prev())
+		case "\033[B":
+			t.inbuf.Set(t.history.Next())
+		case "\033[D":
 			t.inbuf.CursorLeft()
-		case ansireader.CharForward:
+		case "\033[C":
 			t.inbuf.CursorRight()
 		default: // Function that actually adds the text
+			if val.Type != ansi.TypeRune {
+				continue
+			}
+
+			ch, _ := utf8.DecodeRuneInString(val.Value)
 			// Go through auto complete
+			complete := false
 			if t.AutoComplete != nil {
-				newLine, newPos, ok := t.AutoComplete(t.inbuf.String(), t.inbuf.Cursor(), val.Ch)
+				newLine, newPos, ok := t.AutoComplete(t.inbuf.String(), t.inbuf.Cursor(), ch)
 				if ok {
 					t.inbuf.Set(newLine) // Reset print here?
-					log.Println("NewPos:", newPos)
 					t.inbuf.SetCursor(newPos)
-					break
+					complete = true
+					//break
 				}
 			}
-			if !unicode.IsPrint(val.Ch) { // Unhandled char
-				log.Printf("b[%d] %v\n", 1, val.Ch) // Print unprintable char
-				break
+			if !complete && unicode.IsPrint(ch) { // Do not add the tab
+				t.inbuf.WriteString(val.Value)
 			}
-			t.inbuf.WriteRune(val.Ch)
+			//Flush what?
+			//t.Flush()
 		}
-		t.RefreshDisplay()
+		// Lock here
+		//t.ResetPromptCursor()
+		//t.m.Lock()
+		t.out.WriteString(t.PromptString())
+		t.Flush()
+
+		// Internal type should never be exposedt.Flush()
+		//t.m.Unlock()
+
+		//t.m.Unlock()
 	}
+	log.Println("Readline exited")
 	return "", nil
 }
 
-//ClearDisplay clears the prompt display
-func (t *Term) ClearDisplay() { // OrClear?
-	var (
-		lWidth  = t.width
-		lPrompt = len(t.prompt)
-		lBuf    = t.inbuf.Len() // Less last added char i supose?
-	)
-	lineLen := lBuf + lPrompt
-	count := (lineLen) / lWidth
-
-	t.dispbuf.Reset()
-	if count > 0 {
-		//t.dispbuf.WriteString(strings.Repeat("\033[2K\r\033[A", count)) // clear and moveup?
-		//t.dispbuf.WriteString("\033[2K")                                // clear and moveup?
-		t.dispbuf.Write([]byte(fmt.Sprintf("\033[%dA\r\033[J", count))) // clear and moveup?
-	} else {
-		t.dispbuf.Write([]byte(fmt.Sprintf("\r\033[J"))) // clear and moveup?
-	}
+//PromptLineCount helper to count wrapping lines
+func (t *Term) PromptLineCount() int {
+	//Count \n chars too
+	return ((t.inbuf.Len() + len(t.prompt)) / t.width) + 1 // Always one line
 }
 
-// RefreshDisplay the prompt and input
-func (t *Term) RefreshDisplay() {
-	// TODO: Wrong should go back to previous position, because on wrap it breaks
-	// the output
+// PromptString Returns the prompt string proper escaped
+func (t *Term) PromptString() string {
+	buf := bytes.NewBuffer(nil)
+	ab := ansi.NewWriter(buf)
+
+	ab.RestoreCursor()
+	//For redraw
+	//t.RestoreCursor() // Last output position
+	count := t.PromptLineCount() - 1 + t.addLine
+
+	if count > 0 { // Move back input and thing buffer?
+		ab.WriteString(fmt.Sprintf("%s\033[%dA", strings.Repeat("\f", count), count)) // Go down, go up, and left
+	}
+	ab.SaveCursor() // Save cursor again
+
 	// Transform output
 	var dispBuf string
+	// Idea cache this, every time we print the thing, we transform
+	// if transformation is different than cache we redraw, else we put the difference
 	if t.Display != nil {
 		dispBuf = t.Display(t.inbuf.String())
 	} else {
 		dispBuf = t.inbuf.String()
 	}
-	// Calculate cursor index for print
 
-	//TODO: Disable cursor, print move enable enable
-	t.dispbuf.WriteString(fmt.Sprintf("\r%s%s \b", t.prompt, dispBuf)) // Erase after?
+	ab.WriteString(strings.Repeat("\n", t.addLine))
 
-	// Position cursor
-	// Cur left and up if any? of current line?
-	// Disable this for now?
-	dispLen := t.inbuf.Len()
+	ab.WriteString(strings.Repeat("\033[K", t.PromptLineCount())) // N lines
+
+	ab.WriteString(t.prompt)
+	ab.WriteString(dispBuf)
+	ab.WriteString("\033[J") // Clean Rest of the screen
+
+	//ab.WriteString("\033[J") // Maybe rest of the line
+	//fmt.Sprintf("%s%s \b\033[J", t.prompt, dispBuf)) // Erase after prompt?
+
+	// Position cursor // Reposition cursor here??
+	//
+
+	// No unicode for now
+	inbufLen := t.inbuf.Len() // Should count rune width
+	fullWidth := len(t.prompt) + inbufLen
+
+	cursorWidth := fullWidth - (inbufLen - t.inbuf.Cursor())
+	lineCount := count
+
+	desiredLine := (cursorWidth / t.width) // get Line position starting from prompt
+	desiredCol := cursorWidth % t.width    // get column position starting from prompt
+
+	// Go back instead of up
+	lineCount -= t.addLine
+	log.Println("Cursor width:", cursorWidth)
+
+	ab.MoveUp(lineCount)
+	ab.WriteString("\r") // go back anyway
+	ab.MoveDown(desiredLine)
+	ab.MoveRight(desiredCol)
+
+	/*dispLen := t.inbuf.Len()
 	curLeft := (dispLen - t.inbuf.Cursor())
 	if curLeft != 0 && dispLen > 0 {
-		t.dispbuf.WriteString(fmt.Sprintf("\033[%dD", curLeft)) // ? huh
+		ab.WriteString(fmt.Sprintf("\033[%dD", curLeft)) // ? huh
+	}*/
+
+	return buf.String()
+
+}
+
+var flushMutex sync.Mutex
+
+// Flush disables cursor renders and enable
+func (t *Term) Flush() {
+	flushMutex.Lock()
+	defer func() {
+		flushMutex.Unlock()
+		//log.Println("Flushed")
+	}()
+	log.Printf("Raw: %#v", t.out.String())
+
+	t.Writer.Write([]byte("\033[?25l")) // Hide cursor?
+	t.Writer.Write(t.out.Bytes())       // output
+	t.Writer.Write([]byte("\033[?25h")) // Show cursor?
+	t.out.Reset()
+	return /**/
+
+	// DEBUG AREA:
+	// lock while flushing
+	//
+	// Debugger
+	rd := ansi.NewReader(bytes.NewReader(t.out.Bytes()))
+
+	for {
+		val, err := rd.ReadEscape()
+		if err != nil {
+			break
+		}
+		t.Writer.Write([]byte(val.Raw))
+		switch val.Value {
+		case "\033[u":
+			log.Println("Restoring cursor")
+			<-time.After(200 * time.Millisecond)
+		case "\033[s":
+			log.Println("Saving cursor")
+			<-time.After(200 * time.Millisecond)
+		default:
+			//log.Printf("Normal escape :%#v", val.Raw)
+		}
+		<-time.After(46 * time.Millisecond)
+
 	}
+	//log.Println("Reset buffer")
+	t.out.Reset()
 
-	t.Writer.Write(t.dispbuf.Bytes()) // flush
-	t.dispbuf.Reset()
-
+	// Flush into screen
 }

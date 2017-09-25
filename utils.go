@@ -1,6 +1,14 @@
 package hsterm
 
-import "os"
+import (
+	"fmt"
+	"io"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/gohxs/prettylog"
+)
 
 func min(n, min int) int {
 	if n < min {
@@ -16,14 +24,41 @@ func max(n, max int) int {
 	return n
 }
 
-type WriteFlush struct {
-	*os.File
+var (
+	SlowRWDelay = 100
+)
+
+type SlowReader struct {
+	io.Reader
 }
 
-func (wf *WriteFlush) Write(b []byte) (n int, err error) {
+func (sr SlowReader) Read(b []byte) (int, error) {
+	<-time.After(time.Duration(SlowRWDelay) * time.Millisecond)
+	return sr.Reader.Read(b)
+}
 
-	n, err = wf.File.Write(b)
-	wf.File.Sync()
+type SlowWriter struct {
+	io.Writer
+}
 
-	return
+func (sw SlowWriter) Write(b []byte) (int, error) {
+	<-time.After(time.Duration(SlowRWDelay) * time.Millisecond)
+	return sw.Writer.Write(b)
+}
+
+func caller(rel ...int) string {
+	def := 2
+	if len(rel) > 0 {
+		def -= rel[0]
+	}
+
+	prettylog.Global()
+	ptr, file, line, _ := runtime.Caller(def)
+
+	tname := runtime.FuncForPC(ptr).Name()
+	method := tname[strings.LastIndex(tname, ".")+1:]
+	fname := file[strings.LastIndex(file, "/")+1:]
+
+	return fmt.Sprintf("%s:%d/%s", fname, line, method)
+
 }
