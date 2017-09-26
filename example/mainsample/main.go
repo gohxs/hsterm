@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/alecthomas/chroma"
@@ -18,7 +19,7 @@ import (
 	"github.com/alecthomas/chroma/styles"
 	"github.com/cheggaaa/pb"
 	"github.com/gohxs/hsterm"
-	"github.com/gohxs/hsterm/term"
+	"github.com/gohxs/hsterm/term/termutils"
 )
 
 type compl struct {
@@ -37,11 +38,17 @@ var (
 )
 
 func main() {
+	// Debugs:
+	fmt.Println("stdin handle:", os.Stdout.Fd())
+	fmt.Println("syscall:", int(syscall.Stdout))
+	fmt.Print("GetSize value: ")
+	fmt.Println(termutils.GetSize(int(os.Stdout.Fd())))
+	fmt.Println(termutils.GetSize(int(syscall.Stdout)))
+
+	//return
 	flag.BoolVar(&dbgFlag, "dbg", false, "Debug toggle")
 	flag.BoolVar(&dbgTmux, "tmux", true, "Use tmux for debugging")
 	flag.Parse()
-
-	hsterm.DebugOutput = "out.txt"
 
 	log.Println("Hello world")
 	rl := hsterm.New()
@@ -55,11 +62,12 @@ func main() {
 	// DEBUG UTILITY
 	if dbgFlag {
 		if dbgTmux {
-			cmd := exec.Command("tmux", "split", "-h", "-p", "70", "-d", "tail -f out.txt")
+			cmd := exec.Command("tmux", "split", "-h", "-p", "70", "-d", "tail -f dbg.log")
 			cmd.Stdin = os.Stdin
-			cmd.Stderr = rl
-			cmd.Stdout = rl
-			cmd.Run()
+			cmd.Stderr = os.Stderr
+			cmd.Stdout = os.Stdout
+			err := cmd.Run()
+			log.Println("Tmux err", err)
 		}
 		// Capture signal
 		insign := make(chan os.Signal)
@@ -108,7 +116,7 @@ func main() {
 				continue
 			}
 			char := cmds[1]
-			amount := term.GetScreenWidth() * 2
+			amount := rl.GetWidth() * 2
 			if len(cmds) > 2 {
 				amount, _ = strconv.Atoi(cmds[2])
 			}
@@ -127,7 +135,7 @@ func main() {
 				continue
 			}
 			ln := cmds[1]
-			amount := term.GetScreenWidth() * 2
+			amount := rl.GetWidth() * 2
 			if len(cmds) > 2 {
 				amount, _ = strconv.Atoi(cmds[2])
 			}

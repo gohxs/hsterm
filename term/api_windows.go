@@ -10,7 +10,7 @@ import (
 
 var (
 	kernel = NewKernel()
-	stdout = uintptr(syscall.Stdout)
+	stdout = uintptr(syscall.Stdout) // Wrong
 	stdin  = uintptr(syscall.Stdin)
 )
 
@@ -22,6 +22,7 @@ type Kernel struct {
 	ReadConsoleInputW,
 	GetConsoleScreenBufferInfo,
 	GetConsoleCursorInfo,
+	SetConsoleCursorInfo,
 	GetStdHandle CallFunc
 }
 
@@ -87,6 +88,10 @@ type _CONSOLE_CURSOR_INFO struct {
 	bVisible bool
 }
 
+func (c *_CONSOLE_CURSOR_INFO) ptr() uintptr {
+	return uintptr(*(*int32)(unsafe.Pointer(c)))
+}
+
 type CallFunc func(u ...uintptr) error
 
 func NewKernel() *Kernel {
@@ -145,6 +150,10 @@ func GetConsoleCursorInfo() (*_CONSOLE_CURSOR_INFO, error) {
 	t := new(_CONSOLE_CURSOR_INFO)
 	err := kernel.GetConsoleCursorInfo(stdout, uintptr(unsafe.Pointer(t)))
 	return t, err
+}
+
+func SetConsoleCursorInfo(p *_CONSOLE_CURSOR_INFO) error {
+	return kernel.SetConsoleCursorInfo(stdout, uintptr(unsafe.Pointer(p)))
 }
 
 func SetConsoleCursorPosition(c *_COORD) error {

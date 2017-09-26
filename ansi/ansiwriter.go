@@ -1,3 +1,5 @@
+// Wrong should be different, this is a helper
+
 package ansi
 
 import (
@@ -8,47 +10,47 @@ import (
 // Maybe const this
 
 // Writer struct that holds methods to easy write ansi escape codes
-type Writer struct {
+type Helper struct {
 	io.Writer
 }
 
-func NewWriter(wr io.Writer) *Writer {
-	return &Writer{wr}
+func NewHelper(wr io.Writer) *Helper {
+	return &Helper{wr}
 }
 
-func (w *Writer) WriteString(s string) (int, error) {
+func (w *Helper) WriteString(s string) (int, error) {
 	return w.Writer.Write([]byte(s))
 }
 
-func (w *Writer) SaveCursor() {
+func (w *Helper) SaveCursor() {
 	w.WriteString("\033[s")
 }
 
 //WriteRestoreCursor writes the escape for restoring cursor
-func (w *Writer) RestoreCursor() {
+func (w *Helper) RestoreCursor() {
 	w.WriteString("\033[u")
 }
 
 // Cursor movement
-func (w *Writer) MoveUp(n int) {
+func (w *Helper) MoveUp(n int) {
 	if n < 1 {
 		return
 	}
 	w.WriteString(fmt.Sprintf("\033[%dA", n))
 }
-func (w *Writer) MoveDown(n int) {
+func (w *Helper) MoveDown(n int) {
 	if n < 1 {
 		return
 	}
 	w.WriteString(fmt.Sprintf("\033[%dB", n))
 }
-func (w *Writer) MoveLeft(n int) {
+func (w *Helper) MoveLeft(n int) {
 	if n < 1 {
 		return
 	}
 	w.WriteString(fmt.Sprintf("\033[%dD", n))
 }
-func (w *Writer) MoveRight(n int) {
+func (w *Helper) MoveRight(n int) {
 	if n < 1 {
 		return
 	}

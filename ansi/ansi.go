@@ -4,6 +4,14 @@ var (
 	defValue = Value{}
 )
 
+// AnsiParser // reader
+const (
+	TypeRune = iota
+	TypeMeta
+	TypeEscape
+	TypeString // Not used yet but can be used to return a fullstring(nonescape) in a value
+)
+
 // Value Ansi Escape sequence value
 type Value struct { // We can add extra values in case of ascii parse
 	Raw string
@@ -14,10 +22,3 @@ type Value struct { // We can add extra values in case of ascii parse
 	// Key value
 	Value string
 }
-
-// AnsiParser // reader
-const (
-	TypeRune = iota
-	TypeMeta
-	TypeEscape
-)
