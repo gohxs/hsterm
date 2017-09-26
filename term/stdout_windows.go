@@ -10,10 +10,6 @@ import (
 	"github.com/gohxs/hsterm/ansi"
 )
 
-var (
-	Variant = VariantWindows
-)
-
 const (
 	COMMON_LVB_UNDERSCORE = 0x8000
 )
