@@ -29,7 +29,6 @@ func main() {
 
 	cPrompt := "SQLi> "
 	term := hsterm.New() // open
-	defer term.Close()   // close
 	term.SetPrompt(cPrompt)
 	term.Display = display
 
@@ -44,7 +43,7 @@ func main() {
 	}()
 	for {
 		cmds := []string{}
-		line, err := term.Readline()
+		line, err := term.ReadLine()
 		if err != nil {
 			break
 		}
@@ -66,6 +65,17 @@ func main() {
 		cmdH.Cmd(cmd)
 	}
 
+}
+
+// Highlighter test
+func display(input string) string {
+	buf := bytes.NewBuffer([]byte{})
+	err := quick.Highlight(buf, input, "postgres", "terminal16", "monokaim")
+	//err := quick.Highlight(buf, input, "bash", "terminal16m", "monokaim")
+	if err != nil {
+		log.Fatal(err)
+	}
+	return buf.String()
 }
 
 type cmdHandler struct {
@@ -214,14 +224,3 @@ var Monokai = styles.Register(chroma.MustNewStyle("monokaim", chroma.StyleEntrie
 	chroma.GenericStrong:       "bold",
 	chroma.GenericSubheading:   "#75715e",
 }))
-
-// Highlighter test
-func display(input string) string {
-	buf := bytes.NewBuffer([]byte{})
-	err := quick.Highlight(buf, input, "postgres", "terminal16m", "monokaim")
-	//err := quick.Highlight(buf, input, "bash", "terminal16m", "monokaim")
-	if err != nil {
-		log.Fatal(err)
-	}
-	return buf.String()
-}

@@ -1,12 +1,26 @@
 package hsterm
 
+import "strings"
+
+type History interface {
+	Append(string)
+	Prev(string) string
+	Next(string) string
+	List() []string
+}
+
 // History lined history
-type History struct {
+type history struct {
 	index   int
 	history []string
 }
 
-func (h *History) Append(item string) {
+func (h *history) Append(item string) {
+
+	item = strings.TrimSpace(item)
+	if len(item) == 0 {
+		return
+	}
 	if len(h.history) > 0 {
 		last := h.history[len(h.history)-1]
 		if item == last { // Ignore if equal
@@ -17,21 +31,23 @@ func (h *History) Append(item string) {
 	h.index = len(h.history)
 }
 
-func (h *History) Prev() string {
+func (h *history) Prev(string) string {
 	h.index = min(h.index-1, 0)
 	return h.String()
 }
-func (h *History) Next() string {
+func (h *history) Next(string) string {
 	h.index++
 	if h.index >= len(h.history) {
 		h.index = len(h.history)
 		return ""
 	}
 	return h.String()
-
+}
+func (h *history) List() []string {
+	return h.history
 }
 
-func (h *History) String() string {
+func (h *history) String() string {
 	if len(h.history) == 0 {
 		return ""
 	}

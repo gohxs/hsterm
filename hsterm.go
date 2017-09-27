@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	glog "log"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -25,20 +25,7 @@ import (
 var (
 	// ErrInterrupt Interrupt called
 	ErrInterrupt = errors.New("Interrupt")
-	// Local logger
-	log = glog.New(os.Stderr, "", 0)
 )
-
-func init() { // Advancing log/tmux helper
-	log.Println("Opening the thing")
-	f, err := os.OpenFile("dbg.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.FileMode(0644))
-	if err != nil {
-		panic(err)
-	}
-	// Looping the broken loop?
-	//log.SetOutput(f)
-	log = prettylog.New("", f) // Debug logger
-}
 
 // TermFunc callback for receiving a command
 //type termFunc func(string)
@@ -48,11 +35,12 @@ type Term struct {
 	Display      func(string) string
 	AutoComplete func(line string, pos int, key rune) (newLine string, newPos int, ok bool)
 	// Internals
-	history History
+	History History // Expose history
 	inbuf   *InputBuffer
 	prompt  string
 	width   int
 
+	Log    *log.Logger
 	out    bytes.Buffer // Buffered output
 	tstate *termutils.State
 
@@ -86,12 +74,14 @@ func New() *Term {
 		inbuf:   NewInputBuffer(),
 		prompt:  "",
 		width:   0,
-		history: History{},
+		History: &history{},
+		Log:     prettylog.Dummy(),
 
 		// TODO: Way to change this
 		inReader:  os.Stdin,
 		outWriter: os.Stdout,
 
+		// Accept readwriter like golang.org/x/crypt/ssh/terminal
 		Reader: term.NewStdinReader(os.Stdin),   // Reader
 		Writer: term.NewStdoutWriter(os.Stdout), // TODO: for now
 		//m:      sync.Mutex{},
@@ -136,6 +126,7 @@ func (t *Term) ReadLine() (string, error) {
 
 	//
 	rinput := ansi.NewReader(reader)
+
 	for {
 		t.width = t.GetWidth() // Update width actually
 		val, err := rinput.ReadEscape()
@@ -144,6 +135,8 @@ func (t *Term) ReadLine() (string, error) {
 		}
 		// Do some keyMapping, (i.e: MoveNext: "\t")
 
+		// Select handler here
+		//
 		// Non clear
 		switch val.Value {
 		case "\x15": // CtrlU
@@ -177,7 +170,7 @@ func (t *Term) ReadLine() (string, error) {
 				continue
 			}
 			// Append history
-			t.history.Append(t.inbuf.String())
+			t.History.Append(t.inbuf.String())
 
 			line := t.inbuf.String()
 			t.inbuf.Clear()
@@ -192,9 +185,9 @@ func (t *Term) ReadLine() (string, error) {
 		case "\b", "\x7f":
 			t.inbuf.Backspace()
 		case "\033[A", "\x10": // Up or CtrlP
-			t.inbuf.Set(t.history.Prev())
+			t.inbuf.Set(t.History.Prev(t.inbuf.String()))
 		case "\033[B", "\x0E": // Down or CtrlN
-			t.inbuf.Set(t.history.Next())
+			t.inbuf.Set(t.History.Next(t.inbuf.String()))
 		case "\033[D", "\x02": // left or CtrlB
 			t.inbuf.CursorLeft()
 		case "\033[C", "\x06": // Right or ctrlF
@@ -406,7 +399,7 @@ func (t *Term) Flush() {
 		flushMutex.Unlock()
 		//log.Println("Flushed")
 	}()
-	log.Printf("Raw: %#v", t.out.String())
+	t.Log.Printf("Raw: %#v", t.out.String())
 
 	writer := t.Writer
 
@@ -430,13 +423,13 @@ func (t *Term) Flush() {
 		writer.Write([]byte(val.Raw))
 		switch val.Value {
 		case "\033[u":
-			log.Println("Restoring cursor")
+			t.Log.Println("Restoring cursor")
 			<-time.After(200 * time.Millisecond)
 		case "\033[s":
-			log.Println("Saving cursor")
+			t.Log.Println("Saving cursor")
 			<-time.After(200 * time.Millisecond)
 		default:
-			log.Printf("%#v", val.Raw)
+			t.Log.Printf("%#v", val.Raw)
 		}
 		<-time.After(146 * time.Millisecond)
 

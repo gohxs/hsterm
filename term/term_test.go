@@ -51,6 +51,22 @@ var (
 	}
 )
 
+func TestNonTerminal(t *testing.T) {
+	_, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tw := term.NewStdoutWriter(w)
+
+	_, err = tw.Write([]byte("test"))
+
+	if err == nil { // Should fail?
+		t.Fatal("NewStdoutWriter should fail in non terminal")
+	}
+
+}
+
 func TestColors(t *testing.T) {
 	tw := term.NewStdoutWriter(os.Stdout)
 	fmt.Fprintln(tw, "Color test:")

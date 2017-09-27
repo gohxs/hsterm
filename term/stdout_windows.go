@@ -5,6 +5,7 @@ package term
 import (
 	"bytes"
 	"io"
+	"os"
 	"unsafe"
 
 	"github.com/gohxs/hsterm/ansi"
@@ -14,22 +15,38 @@ const (
 	COMMON_LVB_UNDERSCORE = 0x8000
 )
 
-//NewStdoutWriter windows Ansi writer
-func NewStdoutWriter(w io.Writer) io.Writer {
-	return &stdoutWriter{Writer: w}
-}
-
 // Pos hold cursor position on \033[s
 type Pos struct {
 	x, y int
 }
 
 type stdoutWriter struct {
-	io.Writer
+	io.Writer         // Original writer
+	fd        uintptr // file descriptor
+	err       error
 	storedPos Pos
 }
 
+//NewStdoutWriter windows Ansi writer
+func NewStdoutWriter(w io.Writer) io.Writer {
+	var (
+		err error
+		fd  uintptr
+	)
+	f, ok := w.(*os.File)
+	if !ok {
+		err = ErrNotTerminal
+	} else {
+		fd = uintptr(f.Fd())
+	}
+
+	return &stdoutWriter{Writer: w, fd: fd, err: err}
+}
+
 func (w *stdoutWriter) Write(b []byte) (written int, err error) {
+	if w.err != nil {
+		return 0, err
+	}
 
 	// Or create a pipe and loop
 	br := bytes.NewReader(b) // Read whateever is in b
@@ -42,7 +59,7 @@ func (w *stdoutWriter) Write(b []byte) (written int, err error) {
 		}
 
 		if val.Type == ansi.TypeEscape {
-			info, err := GetConsoleScreenBufferInfo()
+			info, err := GetConsoleScreenBufferInfo(w.fd)
 			if err != nil {
 				return 0, err
 			}
@@ -73,7 +90,7 @@ func (w *stdoutWriter) Write(b []byte) (written int, err error) {
 				change = false
 			}
 			if change {
-				SetConsoleCursorPosition(&info.dwCursorPosition)
+				SetConsoleCursorPosition(w.fd, &info.dwCursorPosition)
 				continue // next
 			}
 			///////////////////////////////////////////////////////////////
@@ -97,11 +114,11 @@ func (w *stdoutWriter) Write(b []byte) (written int, err error) {
 						color = word(0x07)
 					case c == 1: // Foregroundintensity
 						color |= 0x08
-					case c >= 30 && c < 40:
+					case c >= 30 && c < 37:
 						c -= 30
 						bits := ((c & 0x1) << 2) | c&0x2 | ((c & 0x4) >> 2) // swap bit 1 and 3
 						color = color&0xFFF8 | word(bits)                   // Invert red blue
-					case c >= 40 && c < 50:
+					case c >= 40 && c < 47:
 						c -= 40
 						bits := ((c & 0x1) << 2) | c&0x2 | ((c & 0x4) >> 2) // swap bit 1 and 3
 						color = color&0xFF8F | (word(bits << 4))            // Invert red blue
@@ -109,7 +126,7 @@ func (w *stdoutWriter) Write(b []byte) (written int, err error) {
 						color |= COMMON_LVB_UNDERSCORE | 0x7
 					}
 				}
-				kernel.SetConsoleTextAttribute(stdout, uintptr(color))
+				kernel.SetConsoleTextAttribute(w.fd, uintptr(color))
 			case "\x1B[?l", "\x1B[?h": // Feature on, feature off
 				if len(val.Attr) == 0 {
 					break
@@ -123,13 +140,13 @@ func (w *stdoutWriter) Write(b []byte) (written int, err error) {
 					} else if val.Value[3] == 'h' {
 						visible = true
 					}
-					cinfo, err := GetConsoleCursorInfo()
+					cinfo, err := GetConsoleCursorInfo(w.fd)
 					if err != nil {
 						return written, err
 					}
 					cinfo.bVisible = visible
 
-					err = SetConsoleCursorInfo(cinfo)
+					err = SetConsoleCursorInfo(w.fd, cinfo)
 					if err != nil {
 						return written, err
 					}
@@ -161,7 +178,7 @@ func (w *stdoutWriter) Write(b []byte) (written int, err error) {
 }
 
 func (w *stdoutWriter) EraseLine(mode int) error {
-	sbi, err := GetConsoleScreenBufferInfo()
+	sbi, err := GetConsoleScreenBufferInfo(w.fd)
 	if err != nil {
 		return err
 	}
@@ -179,12 +196,12 @@ func (w *stdoutWriter) EraseLine(mode int) error {
 		sbi.dwCursorPosition.x = 0
 	}
 	// Do the clear
-	kernel.FillConsoleOutputAttribute(stdout, uintptr(0x7), // Why
+	kernel.FillConsoleOutputAttribute(w.fd, uintptr(0x7), // Why
 		uintptr(size),
 		sbi.dwCursorPosition.ptr(),
 		uintptr(unsafe.Pointer(&written)),
 	)
-	kernel.FillConsoleOutputCharacterW(stdout, uintptr(' '),
+	kernel.FillConsoleOutputCharacterW(w.fd, uintptr(' '),
 		uintptr(size),
 		sbi.dwCursorPosition.ptr(),
 		uintptr(unsafe.Pointer(&written)),
@@ -194,7 +211,7 @@ func (w *stdoutWriter) EraseLine(mode int) error {
 
 }
 func (w *stdoutWriter) EraseDisplay(mode int) error {
-	sbi, err := GetConsoleScreenBufferInfo()
+	sbi, err := GetConsoleScreenBufferInfo(w.fd)
 	if err != nil {
 		return err
 	}
@@ -215,12 +232,12 @@ func (w *stdoutWriter) EraseDisplay(mode int) error {
 		sbi.dwCursorPosition.y = 0
 	}
 	var written int
-	kernel.FillConsoleOutputAttribute(stdout, uintptr(0x7),
+	kernel.FillConsoleOutputAttribute(w.fd, uintptr(0x7),
 		uintptr(size),
 		sbi.dwCursorPosition.ptr(),
 		uintptr(unsafe.Pointer(&written)),
 	)
-	return kernel.FillConsoleOutputCharacterW(stdout, uintptr(' '),
+	return kernel.FillConsoleOutputCharacterW(w.fd, uintptr(' '),
 		uintptr(size),
 		sbi.dwCursorPosition.ptr(),
 		uintptr(unsafe.Pointer(&written)),

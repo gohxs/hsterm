@@ -10,8 +10,8 @@ import (
 
 var (
 	kernel = NewKernel()
-	stdout = uintptr(syscall.Stdout) // Wrong
-	stdin  = uintptr(syscall.Stdin)
+	//stdout = uintptr(syscall.Stdout) // Wrong
+	//stdin  = uintptr(syscall.Stdin)
 )
 
 type Kernel struct {
@@ -137,25 +137,25 @@ func (k *Kernel) Wrap(p *syscall.LazyProc) CallFunc {
 
 }
 
-func GetConsoleScreenBufferInfo() (*_CONSOLE_SCREEN_BUFFER_INFO, error) {
+func GetConsoleScreenBufferInfo(fd uintptr) (*_CONSOLE_SCREEN_BUFFER_INFO, error) {
 	t := new(_CONSOLE_SCREEN_BUFFER_INFO)
 	err := kernel.GetConsoleScreenBufferInfo(
-		stdout,
+		fd,
 		uintptr(unsafe.Pointer(t)),
 	)
 	return t, err
 }
 
-func GetConsoleCursorInfo() (*_CONSOLE_CURSOR_INFO, error) {
+func GetConsoleCursorInfo(fd uintptr) (*_CONSOLE_CURSOR_INFO, error) {
 	t := new(_CONSOLE_CURSOR_INFO)
-	err := kernel.GetConsoleCursorInfo(stdout, uintptr(unsafe.Pointer(t)))
+	err := kernel.GetConsoleCursorInfo(fd, uintptr(unsafe.Pointer(t)))
 	return t, err
 }
 
-func SetConsoleCursorInfo(p *_CONSOLE_CURSOR_INFO) error {
-	return kernel.SetConsoleCursorInfo(stdout, uintptr(unsafe.Pointer(p)))
+func SetConsoleCursorInfo(fd uintptr, p *_CONSOLE_CURSOR_INFO) error {
+	return kernel.SetConsoleCursorInfo(fd, uintptr(unsafe.Pointer(p)))
 }
 
-func SetConsoleCursorPosition(c *_COORD) error {
-	return kernel.SetConsoleCursorPosition(stdout, c.ptr())
+func SetConsoleCursorPosition(fd uintptr, c *_COORD) error {
+	return kernel.SetConsoleCursorPosition(fd, c.ptr())
 }

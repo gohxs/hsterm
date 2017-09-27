@@ -20,6 +20,7 @@ import (
 	"github.com/cheggaaa/pb"
 	"github.com/gohxs/hsterm"
 	"github.com/gohxs/hsterm/term/termutils"
+	"github.com/gohxs/prettylog"
 )
 
 type compl struct {
@@ -37,6 +38,9 @@ var (
 	dbgTmux bool
 )
 
+func init() { // Advancing log/tmux helper
+}
+
 func main() {
 	// Debugs:
 	fmt.Println("stdin handle:", os.Stdout.Fd())
@@ -53,6 +57,15 @@ func main() {
 	log.Println("Hello world")
 	rl := hsterm.New()
 	rl.AutoComplete = completeFunc
+
+	f, err := os.OpenFile("dbg.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.FileMode(0644))
+	if err != nil {
+		panic(err)
+	}
+	// Looping the broken loop?
+	//log.SetOutput(f)
+	rl.Log = prettylog.New("", f) // Debug logger that sends to F
+
 	//rl.Display = display
 	rl.SetPrompt("stdio@hsterm ~$ ")
 	log.SetFlags(0)

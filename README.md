@@ -6,14 +6,15 @@ My own implementation of a tool similar to Readline
 
 Readline, Ansi parser, ansi translator for windows
 
-Key features:
-
 * Display handler - readbuffer output for highlighters/completers
 * Autocomplete handler - similar to the one found in golang.org/x/crypto/ssh/terminal
 
 TODO
 ----------
 
+* [ ] 256/16m to 16 color translator for windows or check terminal support for
+  more colors
+* [ ] spf13/cobra example to make it like netsh windows
 * [ ] Native multi line suport that allows multiline completion
 * [ ] Fish alike fuzzy search of history
 * [X] Char cursor memory instead of line output
