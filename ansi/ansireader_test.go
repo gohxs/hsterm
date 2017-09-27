@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/gohxs/hsterm/ansi"
+	"github.com/gohxs/termu/ansi"
 )
 
 type testValue struct {

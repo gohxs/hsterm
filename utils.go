@@ -1,4 +1,4 @@
-package hsterm
+package termu
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gohxs/prettylog"
+	_ "github.com/gohxs/prettylog"
 )
 
 func min(n, min int) int {
@@ -51,8 +51,6 @@ func caller(rel ...int) string {
 	if len(rel) > 0 {
 		def -= rel[0]
 	}
-
-	prettylog.Global()
 	ptr, file, line, _ := runtime.Caller(def)
 
 	tname := runtime.FuncForPC(ptr).Name()

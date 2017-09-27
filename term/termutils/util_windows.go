@@ -67,7 +67,7 @@ type (
 )
 
 type State struct {
-	mode uint32
+	Mode uint32
 }
 
 // IsTerminal returns true if the given file descriptor is a terminal.
@@ -108,7 +108,7 @@ func GetState(fd int) (*State, error) {
 // Restore restores the terminal connected to the given file descriptor to a
 // previous state.
 func Restore(fd int, state *State) error {
-	_, _, err := syscall.Syscall(procSetConsoleMode.Addr(), 2, uintptr(fd), uintptr(state.mode), 0)
+	_, _, err := syscall.Syscall(procSetConsoleMode.Addr(), 2, uintptr(fd), uintptr(state.Mode), 0)
 	return err
 }
 

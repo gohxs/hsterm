@@ -5,10 +5,12 @@ package term
 import (
 	"bytes"
 	"io"
+	"log"
 	"os"
 	"unsafe"
 
-	"github.com/gohxs/hsterm/ansi"
+	"github.com/gohxs/termu/ansi"
+	"github.com/gohxs/termu/term/termutils"
 )
 
 const (
@@ -25,22 +27,33 @@ type stdoutWriter struct {
 	fd        uintptr // file descriptor
 	err       error
 	storedPos Pos
+	lastColor word
 }
 
 //NewStdoutWriter windows Ansi writer
 func NewStdoutWriter(w io.Writer) io.Writer {
+
 	var (
 		err error
 		fd  uintptr
 	)
 	f, ok := w.(*os.File)
 	if !ok {
-		err = ErrNotTerminal
-	} else {
-		fd = uintptr(f.Fd())
+		err = ErrNotTerminal // should fail
+		return w
 	}
 
-	return &stdoutWriter{Writer: w, fd: fd, err: err}
+	fd = uintptr(f.Fd())
+	st, err := termutils.GetState(int(fd))
+	st.Mode |= 0x0004 // Enable VT input
+	err = termutils.Restore(int(fd), st)
+	if err != nil {
+		log.Println("Unable to set term", err)
+		//return &stdoutWriter{Writer: w, fd: fd, err: err}
+	}
+	log.Println("Passing same writer")
+	return w // Just passtrough
+
 }
 
 func (w *stdoutWriter) Write(b []byte) (written int, err error) {
@@ -126,6 +139,7 @@ func (w *stdoutWriter) Write(b []byte) (written int, err error) {
 						color |= COMMON_LVB_UNDERSCORE | 0x7
 					}
 				}
+				w.lastColor = color
 				kernel.SetConsoleTextAttribute(w.fd, uintptr(color))
 			case "\x1B[?l", "\x1B[?h": // Feature on, feature off
 				if len(val.Attr) == 0 {
@@ -156,7 +170,6 @@ func (w *stdoutWriter) Write(b []byte) (written int, err error) {
 			default:
 				change = false
 			}
-
 			if !change {
 				n, err := w.Writer.Write([]byte("^[" + val.Value[1:]))
 				written += n
@@ -196,7 +209,7 @@ func (w *stdoutWriter) EraseLine(mode int) error {
 		sbi.dwCursorPosition.x = 0
 	}
 	// Do the clear
-	kernel.FillConsoleOutputAttribute(w.fd, uintptr(0x7), // Why
+	kernel.FillConsoleOutputAttribute(w.fd, uintptr(w.lastColor), // Why
 		uintptr(size),
 		sbi.dwCursorPosition.ptr(),
 		uintptr(unsafe.Pointer(&written)),
@@ -232,7 +245,7 @@ func (w *stdoutWriter) EraseDisplay(mode int) error {
 		sbi.dwCursorPosition.y = 0
 	}
 	var written int
-	kernel.FillConsoleOutputAttribute(w.fd, uintptr(0x7),
+	kernel.FillConsoleOutputAttribute(w.fd, uintptr(w.lastColor),
 		uintptr(size),
 		sbi.dwCursorPosition.ptr(),
 		uintptr(unsafe.Pointer(&written)),

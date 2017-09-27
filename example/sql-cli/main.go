@@ -14,7 +14,7 @@ import (
 	"github.com/alecthomas/chroma"
 	"github.com/alecthomas/chroma/quick"
 	"github.com/alecthomas/chroma/styles"
-	"github.com/gohxs/hsterm"
+	"github.com/gohxs/termu"
 	//"github.com/gohxs/readline"
 
 	_ "github.com/denisenkom/go-mssqldb"
@@ -28,7 +28,7 @@ func main() {
 	cmdH := cmdHandler{}
 
 	cPrompt := "SQLi> "
-	term := hsterm.New() // open
+	term := termu.New() // open
 	term.SetPrompt(cPrompt)
 	term.Display = display
 

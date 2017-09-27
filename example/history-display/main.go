@@ -9,7 +9,7 @@ import (
 	"github.com/alecthomas/chroma"
 	"github.com/alecthomas/chroma/quick"
 	"github.com/alecthomas/chroma/styles"
-	"github.com/gohxs/hsterm"
+	"github.com/gohxs/termu"
 )
 
 var (
@@ -18,7 +18,7 @@ var (
 
 func main() {
 
-	t := hsterm.New()
+	t := termu.New()
 	t.SetPrompt("hello> ")
 	t.Display = buildDisplay(t)
 	t.AutoComplete = buildComplete(t)
@@ -38,7 +38,7 @@ func main() {
 	}
 }
 
-func histMatchList(t *hsterm.Term, in string) []string {
+func histMatchList(t *termu.Term, in string) []string {
 	ret := []string{}
 	histList := t.History.List()
 	for i := len(histList) - 1; i >= 0; i-- {
@@ -50,7 +50,7 @@ func histMatchList(t *hsterm.Term, in string) []string {
 	return ret
 }
 
-func buildDisplay(t *hsterm.Term) func(string) string {
+func buildDisplay(t *termu.Term) func(string) string {
 	return func(in string) string {
 		if len(in) == 0 { // pass right throuh its a 0
 			return in
@@ -74,7 +74,7 @@ func buildDisplay(t *hsterm.Term) func(string) string {
 
 }
 
-func buildComplete(t *hsterm.Term) func(string, int, rune) (string, int, bool) {
+func buildComplete(t *termu.Term) func(string, int, rune) (string, int, bool) {
 	return func(line string, pos int, key rune) (newLine string, newPos int, ok bool) {
 		if key != '\t' {
 			tab = 0
@@ -150,6 +150,7 @@ func highlight(input string) string {
 	return buf.String()
 }
 
+// from original but removed background
 var _ = styles.Register(chroma.MustNewStyle("monokaim", chroma.StyleEntries{
 	chroma.Text:                "#f8f8f2",
 	chroma.Error:               "#960050 bg:#1e0010",

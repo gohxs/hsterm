@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gohxs/hsterm/term"
+	"github.com/gohxs/termu/term"
 )
 
 type coords struct {
@@ -20,7 +20,11 @@ type coords struct {
 }
 
 var (
-	height         = 30
+	height      = 30
+	colorCoords = []coords{
+		{55, 15, "\033[15;55H\033[46m\033[2K", "To 15;55 and Clear Line with color", true},
+		{55, 17, "\033[2B\033[44m\033[2J", "2Down and clear fullscreen", false},
+	}
 	movementCoords = []coords{ // Movement
 		{10, 10, "\033[10;10H", "Move to line 10, col 10", true},
 		{11, 10, "\033[C", "1 right", false},
@@ -90,9 +94,14 @@ func TestColors(t *testing.T) {
 
 }
 
+func TestFullColorClear(t *testing.T) {
+	runTest(t, colorCoords)
+}
+
 ////////////////////
 // TEST FUNC
 func TestMovement(t *testing.T) {
+	runTest(t, movementCoords)
 
 	if !testing.Verbose() || testing.Short() {
 		t.SkipNow()
@@ -111,31 +120,19 @@ func TestMovement(t *testing.T) {
 
 }
 func TestLineClean(t *testing.T) {
-
-	if !testing.Verbose() || testing.Short() {
-		t.SkipNow()
-		return
-	}
-	tw := term.NewStdoutWriter(os.Stdout)
-	curCoords := lineCleaningCoords
-	for curIndex, c := range curCoords {
-		if c.redraw {
-			hPrint(tw, curIndex+1, screen(curIndex, curCoords), "Redraw")
-		}
-		hPrint(tw, curIndex+1, c.escape, c.label)
-		fmt.Fprintf(tw, "\033[0m")
-	}
-	<-time.After(5 * time.Second)
+	runTest(t, lineCleaningCoords)
 
 }
 func TestTerminalClean(t *testing.T) {
+	runTest(t, terminalCleaningCoords)
+}
 
-	if !testing.Verbose() || testing.Short() {
-		t.SkipNow()
+func runTest(t *testing.T, curCoords []coords) {
+	if !testing.Short() {
+		t.Skipf("Test is visual, should be run with -v")
 		return
 	}
 	tw := term.NewStdoutWriter(os.Stdout)
-	curCoords := terminalCleaningCoords
 	for curIndex, c := range curCoords {
 		if c.redraw {
 			hPrint(tw, curIndex+1, screen(curIndex, curCoords), "Redraw")
@@ -144,7 +141,6 @@ func TestTerminalClean(t *testing.T) {
 		fmt.Fprintf(tw, "\033[0m")
 	}
 	<-time.After(5 * time.Second)
-
 }
 
 func screen(curIndex int, testCoords []coords) string {

@@ -1,4 +1,4 @@
-package hsterm
+package termu
 
 import "strings"
 
