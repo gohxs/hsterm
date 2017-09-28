@@ -13,13 +13,16 @@ Readline, Ansi parser, ansi writer for windows
 
 TODO
 ----------
-
+* [ ] Instead of readline, we can do a Scanner
+* [ ] Package organization
+  * [ ] Merge termu/term with termu/term/termutils into one
+  * [ ] NewStdoutWriter should be renamed or restructured to NewTerminalWriter?
 * [ ] 256/16m to 16 color translator for windows or check terminal support for
   more colors
 * [ ] spf13/cobra example to make it like netsh windows
-* [ ] Native multi line suport that allows multiline completion
+* [ ] Native multi line support that allows multiline completion
 * [ ] Fish alike fuzzy search of history
-  * [X] Created an example of how it would be implemented, earlier versions
+  * [X] Created an example of how it would be implemented, earlier version
 * [X] Char cursor memory instead of line output
 * Create and rearrange windows Term
   * [X] Writer wrapper
@@ -38,6 +41,5 @@ TODO
   * [ ] Cursor manipulation runeWidth
 * [ ] Prepare completer maybe (readline)
 * [ ] History search (readline)
-* [ ] Alter display to preview tabs (fish)
 * [X] Project rename, hsterm was *not* a good name
 * [X] Show a progress bar and prompt at same time

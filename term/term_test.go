@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ var (
 	height      = 30
 	colorCoords = []coords{
 		{55, 15, "\033[15;55H\033[46m\033[2K", "To 15;55 and Clear Line with color", true},
-		{55, 17, "\033[2B\033[44m\033[2J", "2Down and clear fullscreen", false},
+		{55, 17, "\033[2B\033[44m\033[2J", "2Down and clear fullscreen with color", false},
 	}
 	movementCoords = []coords{ // Movement
 		{10, 10, "\033[10;10H", "Move to line 10, col 10", true},
@@ -56,24 +57,54 @@ var (
 )
 
 func TestNonTerminal(t *testing.T) {
-	_, w, err := os.Pipe()
+
+	f, err := ioutil.TempFile(os.TempDir(), "term-test")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	tw := term.NewStdoutWriter(w)
-
-	_, err = tw.Write([]byte("test"))
-
-	if err == nil { // Should fail?
-		t.Fatal("NewStdoutWriter should fail in non terminal")
+	_, err = term.NewStdoutWriter(f)
+	if err == nil {
+		t.Fatal("Output should fail, because its not a terminal")
 	}
 
 }
 
+func TestSaveRestore(t *testing.T) {
+	tw, err := term.NewStdoutWriter(os.Stdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintln(tw, "\033[2J\033[H")
+	fmt.Fprint(tw, "Saving cursor here >\033[s <\n")
+	fmt.Fprint(tw, "Do more things\n")
+	<-time.After(3 * time.Second)
+	fmt.Fprint(tw, "Restoring cursor there\n")
+	fmt.Fprint(tw, "\033[u")
+	<-time.After(3 * time.Second)
+
+}
+func TestCursor(t *testing.T) {
+	tw, err := term.NewStdoutWriter(os.Stdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintln(tw, "\033[2J\033[H")
+	fmt.Fprintln(tw, "Hiding cursor for 3sec\033[?25l")
+	<-time.After(3 * time.Second)
+	fmt.Fprintln(tw, "do things, show in 3 sec")
+	<-time.After(3 * time.Second)
+	fmt.Fprintln(tw, "\033[?25h")
+	<-time.After(3 * time.Second)
+}
+
 func TestColors(t *testing.T) {
-	tw := term.NewStdoutWriter(os.Stdout)
-	fmt.Fprintln(tw, "Color test:")
+	tw, err := term.NewStdoutWriter(os.Stdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fmt.Fprintln(tw, "\033[2J\033[HColor test:")
 	fmt.Fprintln(tw, "\033[30;42;46;31mMulti param\033[0m")
 	fmt.Fprintln(tw, "\033[30mBLACK\033[01;30mBLACK\033[40mBLACK\033[0m rest")
 	fmt.Fprintln(tw, "\033[31mRED\033[01;31mRED\033[41mRED\033[0m rest")
@@ -83,6 +114,9 @@ func TestColors(t *testing.T) {
 	fmt.Fprintln(tw, "\033[35mMAGENTA\033[01;35mMAGENTA\033[45mMAGENTA\033[0m rest")
 	fmt.Fprintln(tw, "\033[36mCYAN\033[01;36mCYAN\033[46mMAGENTA\033[0m rest")
 	fmt.Fprintln(tw, "\033[37mWHITE\033[01;37mWHITE\033[47mWHITE\033[0m rest")
+
+	fmt.Fprintln(tw, "\033[01mcolor\033[m\033[30m\033[47m Separated\033[m")
+
 	// 256 colors
 	for i := 0; i < 255; i++ {
 		if i%30 == 0 {
@@ -102,47 +136,86 @@ func TestFullColorClear(t *testing.T) {
 // TEST FUNC
 func TestMovement(t *testing.T) {
 	runTest(t, movementCoords)
-
-	if !testing.Verbose() || testing.Short() {
-		t.SkipNow()
-		return
-	}
-	tw := term.NewStdoutWriter(os.Stdout)
-	curCoords := movementCoords
-	for curIndex, c := range curCoords {
-		if c.redraw {
-			hPrint(tw, curIndex+1, screen(curIndex, curCoords), "Redraw")
-		}
-		hPrint(tw, curIndex+1, c.escape, c.label)
-		fmt.Fprintf(tw, "\033[0m")
-	}
-	<-time.After(5 * time.Second)
-
 }
 func TestLineClean(t *testing.T) {
 	runTest(t, lineCleaningCoords)
-
 }
 func TestTerminalClean(t *testing.T) {
 	runTest(t, terminalCleaningCoords)
 }
 
 func runTest(t *testing.T, curCoords []coords) {
-	if !testing.Short() {
-		t.Skipf("Test is visual, should be run with -v")
+	if testing.Short() {
+		t.Skipf("Test is not short")
 		return
 	}
-	tw := term.NewStdoutWriter(os.Stdout)
+	tw, err := term.NewStdoutWriter(os.Stdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	for curIndex, c := range curCoords {
 		if c.redraw {
-			hPrint(tw, curIndex+1, screen(curIndex, curCoords), "Redraw")
+			<-time.After(3 * time.Second)
+			// Wait
+			fmt.Fprintf(tw, screen(curIndex, curCoords))
+			//hPrint(tw, curIndex+1, screen(curIndex, curCoords), "Redraw")
 		}
-		hPrint(tw, curIndex+1, c.escape, c.label)
+		hPrint(tw, curIndex, curCoords)
+		//hPrint(tw, curIndex+1, c.escape, c.label)
 		fmt.Fprintf(tw, "\033[0m")
+		<-time.After(1000 * time.Millisecond)
 	}
-	<-time.After(5 * time.Second)
+	<-time.After(1 * time.Second)
 }
 
+func hPrintOne(tw io.Writer, index int, test string, label string) {
+
+	var status string
+	if len(test) > 10 {
+		status = fmt.Sprintf("\033[31H\033[32m%d - %s\033[0m\033[K", index, label) // Manual clear
+	} else {
+		status = fmt.Sprintf("\033[31H\033[32m%d - %#v\033[35m : %s\033[0m\033[K", index, test, label) // Manual clear
+	}
+
+	for tickLeft := 3; tickLeft > 0; tickLeft-- {
+		fmt.Fprintf(tw, "\033[s%s (%d)\033[u", status, tickLeft)
+		<-time.After(time.Second)
+	}
+	fmt.Fprintf(tw, "\033[s%s (%d)\033[u", status, 0)
+
+	fmt.Fprintf(tw, "%s\033[s", test)
+	<-time.After(300 * time.Millisecond)
+}
+
+func hPrint(tw io.Writer, index int, testCoords []coords) {
+
+	//curTest := testCoords[index]
+	var status string
+	status = fmt.Sprintf("\033[32H\033[m")
+	for i, t := range testCoords { // Print all coords
+		test := t.escape
+		label := t.label
+		if i == index {
+			status += fmt.Sprintf("\033[44m\033[1m")
+		}
+		if len(test) > 20 { // Do not print if big
+			status += fmt.Sprintf("\033[32m%d - \033[35m%s\033[0m\033[K\n", i+1, label) // Manual clear
+		} else {
+			status += fmt.Sprintf("\033[32m%d - %#v\033[35m : %s\033[0m\033[K\n", i+1, test, label) // Manual clear
+		}
+	}
+	test := testCoords[index].escape // ??
+
+	tickLeft := 3
+	for ; tickLeft > 0; tickLeft-- {
+		fmt.Fprintf(tw, "\033[31H\033[m\033[2KTesting in \033[01m%d\033[0m %s\033[u", tickLeft, status)
+		<-time.After(time.Second)
+	}
+	fmt.Fprintf(tw, "\033[31H\033[m\033[2KTesting in \033[01m%d\033[0m %s\033[u", tickLeft, status)
+
+	fmt.Fprintf(tw, "\033[m%s\033[s", test)
+}
 func screen(curIndex int, testCoords []coords) string {
 
 	buf := bytes.NewBuffer(nil)
@@ -166,22 +239,4 @@ func screen(curIndex int, testCoords []coords) string {
 		}
 	}
 	return buf.String()
-}
-func hPrint(tw io.Writer, index int, test string, label string) {
-
-	var status string
-	if len(test) > 10 {
-		status = fmt.Sprintf("\033[31H\033[32m%d - %s\033[0m\033[K", index, label) // Manual clear
-	} else {
-		status = fmt.Sprintf("\033[31H\033[32m%d - %#v\033[35m : %s\033[0m\033[K", index, test, label) // Manual clear
-	}
-
-	for tickLeft := 3; tickLeft > 0; tickLeft-- {
-		fmt.Fprintf(tw, "\033[s%s (%d)\033[u", status, tickLeft)
-		<-time.After(time.Second)
-	}
-	fmt.Fprintf(tw, "\033[s%s (%d)\033[u", status, 0)
-
-	fmt.Fprintf(tw, "%s\033[s", test)
-	<-time.After(300 * time.Millisecond)
 }

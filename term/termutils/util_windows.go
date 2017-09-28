@@ -108,8 +108,11 @@ func GetState(fd int) (*State, error) {
 // Restore restores the terminal connected to the given file descriptor to a
 // previous state.
 func Restore(fd int, state *State) error {
-	_, _, err := syscall.Syscall(procSetConsoleMode.Addr(), 2, uintptr(fd), uintptr(state.Mode), 0)
-	return err
+	_, _, e := syscall.Syscall(procSetConsoleMode.Addr(), 2, uintptr(fd), uintptr(state.Mode), 0)
+	if e != 0 {
+		return error(e)
+	}
+	return nil
 }
 
 // GetSize returns the dimensions of the given terminal.

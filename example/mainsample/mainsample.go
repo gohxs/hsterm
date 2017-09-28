@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -11,7 +12,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/alecthomas/chroma"
@@ -20,7 +20,6 @@ import (
 	"github.com/cheggaaa/pb"
 	"github.com/gohxs/prettylog"
 	"github.com/gohxs/termu"
-	"github.com/gohxs/termu/term/termutils"
 )
 
 type compl struct {
@@ -38,39 +37,30 @@ var (
 	dbgTmux bool
 )
 
-func init() { // Advancing log/tmux helper
-}
-
 func main() {
 	// Debugs:
-	fmt.Println("stdin handle:", os.Stdout.Fd())
-	fmt.Println("syscall:", int(syscall.Stdout))
-	fmt.Print("GetSize value: ")
-	fmt.Println(termutils.GetSize(int(os.Stdout.Fd())))
-	fmt.Println(termutils.GetSize(int(syscall.Stdout)))
-
 	//return
 	flag.BoolVar(&dbgFlag, "dbg", false, "Debug toggle")
 	flag.BoolVar(&dbgTmux, "tmux", true, "Use tmux for debugging")
 	flag.Parse()
 
-	log.Println("Hello world")
-	rl := termu.New()
-	rl.AutoComplete = completeFunc
-
-	f, err := os.OpenFile("dbg.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.FileMode(0644))
+	dbgFile, err := os.OpenFile("dbg.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.FileMode(0644))
 	if err != nil {
 		panic(err)
 	}
-	// Looping the broken loop?
-	//log.SetOutput(f)
-	rl.Log = prettylog.New("", f) // Debug logger that sends to F
-
-	//rl.Display = display
-	rl.SetPrompt("stdio@termu ~$ ")
-	log.SetFlags(0)
 
 	done := make(chan int, 1)
+
+	// TERM UTILS SETUP
+	t := termu.New()
+	t.SetPrompt("stdio@termu ~$ ")
+	t.AutoComplete = buildAutoComplete(t)
+	t.Display = buildDisplay(t)
+	t.Log = prettylog.New("", dbgFile) // Debug logger that sends to F
+
+	t.History.Append("char - 1000")
+	t.History.Append("pb &")
+	t.History.Append("pb")
 
 	// DEBUG UTILITY
 	if dbgFlag {
@@ -81,149 +71,201 @@ func main() {
 			cmd.Stdout = os.Stdout
 			err := cmd.Run()
 			log.Println("Tmux err", err)
-		}
-		// Capture signal
-		insign := make(chan os.Signal)
-		signal.Notify(insign, os.Interrupt)
-		go func() { <-insign; close(done) }() // Signaler
-		defer func() {                        // Done
-			log.Println("Killing pane")
-			if dbgTmux {
+
+			defer func() { // Done
 				c := exec.Command("tmux", "kill-pane", "-t", "2")
 				c.Run()
-			}
-		}()
-	}
-
-	log.SetOutput(rl) // Change default logger to term
-
-	//Progress bar helper
-	progressBar := func() {
-		count := 100000
-		bar := pb.StartNew(count)
-		bar.Output = rl
-		for i := 0; i < count; i++ {
-			bar.Increment()
-			time.Sleep(20 * time.Microsecond)
+			}()
 		}
-		bar.FinishPrint("The End!")
+		// Capture signal
+
 	}
+	insign := make(chan os.Signal)
+	signal.Notify(insign, os.Interrupt)
+	go func() { <-insign; close(done) }() // Signaler
 
 	reSplitter := regexp.MustCompile("\\s+")
 	// CHANS
 	for {
-		line, err := rl.ReadLine()
+		line, err := t.ReadLine()
 		if err != nil {
 			close(done)
 			break
 		}
-
 		cmds := reSplitter.Split(line, -1)
-		fmt.Fprintln(rl, "line:", line, cmds) // Echoer
 
 		switch cmds[0] {
-		case "char":
+		case "echo":
+			fmt.Fprint(t, strings.Join(cmds[1:], " "))
+		case "char", "line":
 			if len(cmds) < 2 {
-				fmt.Fprintln(rl, "Wrong number of arguments")
-				fmt.Fprintln(rl, "  Usage: char <c> [number]")
+				fmt.Fprintln(t, "Wrong number of arguments")
+				fmt.Fprintf(t, "  Usage: %s <c> [number]\n", cmds[0])
 				continue
 			}
-			char := cmds[1]
-			amount := rl.GetWidth() * 2
-			if len(cmds) > 2 {
-				amount, _ = strconv.Atoi(cmds[2])
-			}
-			go func() {
-				for i := 0; i < amount; i++ {
-					fmt.Fprint(rl, char)
-					<-time.After(20 * time.Millisecond)
-				}
-			}()
-		case "a":
-			fmt.Fprint(rl, strings.Join(cmds, " "))
-		case "line":
-			if len(cmds) < 2 {
-				fmt.Fprintln(rl, "Wrong number of arguments")
-				fmt.Fprintln(rl, "  Usage: line <c> [number]")
-				continue
-			}
-			ln := cmds[1]
-			amount := rl.GetWidth() * 2
-			if len(cmds) > 2 {
-				amount, _ = strconv.Atoi(cmds[2])
-			}
-			go func() {
-				for i := 0; i < amount; i++ {
-					fmt.Fprintln(rl, ln)
-					<-time.After(300 * time.Millisecond)
-				}
-			}()
+			asyncRepeat(t, cmds)
 		case "pb":
-			if len(cmds) > 1 && cmds[1] == "background" {
-				go progressBar()
+			if len(cmds) > 1 && cmds[1] == "&" {
+				go progressBar(t)
 				continue
 			}
-			progressBar()
+			progressBar(t)
 
 		}
 	}
 	<-done
+}
+
+// Something to print
+func asyncRepeat(t *termu.Term, cmds []string) {
+	delay := 20
+	if cmds[0] == "line" {
+		cmds[1] += "\n"
+		delay = 800
+	}
+	char := cmds[1]
+	amount, _ := t.GetSize()
+	amount *= 2
+	if len(cmds) > 2 {
+		amount, _ = strconv.Atoi(cmds[2])
+	}
+	go func() {
+		for i := 0; i < amount; i++ {
+			fmt.Fprint(t, char)
+			<-time.After(time.Duration(delay) * time.Millisecond)
+		}
+	}()
 
 }
 
-func completeFunc(line string, pos int, key rune) (newLine string, newPos int, ok bool) {
-	if key != '\t' {
-		return
+// Global tab
+var tab = 0
+
+func histMatchList(t *termu.Term, in string) []string {
+	if len(in) == 0 {
+		return t.History.List()
 	}
-	var match []string
-	for _, v := range complete {
-		if strings.HasPrefix(v.token, line) {
-			match = append(match, v.token)
+	ret := []string{}
+	histList := t.History.List()
+	for i := len(histList) - 1; i >= 0; i-- {
+		v := histList[i]              // reverse
+		if strings.HasPrefix(v, in) { // Print in in white, rest in black
+			ret = append(ret, v)
 		}
 	}
-	if len(match) == 0 { // No match
-		return "", 0, false
-	}
-	prefix := ""
-indexFor:
-	for i := 0; ; i++ {
-		if i >= len(match[0]) {
-			break indexFor
+	return ret
+}
+
+func buildDisplay(t *termu.Term) func(string) string {
+	return func(in string) string {
+		if len(in) == 0 { // pass right throuh its a 0
+			return in
+		}
+		first, rest := "", ""
+		n := utilSplitN(in, " ", &first, &rest)
+		if n == 2 {
+			rest = " " + rest
 		}
 
-		ch := match[0][i]
-		for _, v := range match[1:] {
-			if i > len(v) || ch != v[i] {
-				break indexFor
+		list := histMatchList(t, in)
+		if len(list) == 0 {
+			//sub display here
+			return highlight(first + rest)
+			//return "\033[01;31m" + first + "\033[0;36m" + rest + "\033[m"
+		}
+		m := list[tab%len(list)] // Select one from list
+		return highlight(first+rest) + "\033[01;30m" + m[len(in):] + "\033[m"
+		//return "\033[01;37m" + first + "\033[0;36m" + rest + "\033[01;30m" + m[len(in):] + "\033[m"
+	}
+
+}
+
+func buildAutoComplete(t *termu.Term) func(string, int, rune) (string, int, bool) {
+	return func(line string, pos int, key rune) (newLine string, newPos int, ok bool) {
+		if key != '\t' {
+			tab = 0
+			return
+		}
+		tab++
+
+		buf := bytes.NewBuffer(nil)
+
+		list := histMatchList(t, line)
+		fmt.Fprint(buf, fmt.Sprintf("\033[%dB", t.PromptLineCount()+1))
+		for i, v := range list {
+			//utilSplitN(v, " ", &first) // Parse scan??
+			if i == tab%len(list) {
+				fmt.Fprintf(buf, "\033[7m")
+			}
+			fmt.Fprintf(buf, "%s\033[m\t", v)
+		}
+		fmt.Fprintln(buf)
+
+		t.Write(buf.Bytes())
+		//if len(line) == 0 { // Maybe we can show a list splited by first char
+		//	return
+		//}
+
+		// Prefix match
+		//list := histMatchList(t, line)
+		if len(list) == 0 { // no match just return
+			return
+		}
+
+		res := list[0]
+		if len(list) > 1 { // one match only
+			res = ""
+			// Complete the common chars in list
+		colFor:
+			for i := 0; ; i++ {
+				if i >= len(list[0]) {
+					break
+				}
+				c := list[0][i]
+				for _, v := range list[1:] {
+					if i >= len(v) || c != v[i] {
+						break colFor
+					}
+				}
+				res += string(c)
 			}
 		}
-		prefix += string(ch)
-	}
 
-	// Find smaller?
-	log.Println()
-	log.Println(match)
-
-	if len(prefix) > 0 {
-		if len(match) == 1 {
-			prefix += " "
+		// Complete only until space if we are in a space move forward
+		for pos < len(res) && res[pos] == ' ' { // CountSpace
+			pos++
 		}
-		line = prefix
-		pos = len(prefix)
-		return prefix, pos, true
-	}
+		space := strings.Index(res[pos:], " ") // current position forward
 
-	return line, pos, false
+		if space > 0 { // only positive space
+			res = res[:pos+space] + " "
+		}
+		if res != line { // reset tab if line changed
+			tab = 0
+		}
+		// Go to next space only
+		return res, len(res), true
+	} // End complete
 }
 
-func display(input string) string {
+func highlight(input string) string {
 	buf := bytes.NewBuffer([]byte{})
-	err := quick.Highlight(buf, input, "postgres", "terminal16m", "monokaim")
+	err := quick.Highlight(buf, input, "sql", "terminal", "monokaim")
 	//err := quick.Highlight(buf, input, "bash", "terminal16m", "monokaim")
 	if err != nil {
 		log.Fatal(err)
 	}
 	return buf.String()
+}
+func progressBar(w io.Writer) { //Progress bar helper
+	count := 100000
+	bar := pb.StartNew(count)
+	bar.Output = w
+	for i := 0; i < count; i++ {
+		bar.Increment()
+		time.Sleep(20 * time.Microsecond)
+	}
+	bar.FinishPrint("The End!")
 }
 
 var _ = styles.Register(chroma.MustNewStyle("monokaim", chroma.StyleEntries{
@@ -255,3 +297,17 @@ var _ = styles.Register(chroma.MustNewStyle("monokaim", chroma.StyleEntries{
 	chroma.GenericStrong:       "bold",
 	chroma.GenericSubheading:   "#75715e",
 }))
+
+// Utility
+func utilSplitN(s string, sep string, targets ...*string) (n int) {
+	N := len(targets)
+	res := strings.SplitN(s, sep, N)
+	n = len(res)
+	for i, t := range targets {
+		if i >= len(res) {
+			return
+		}
+		*t = res[i]
+	}
+	return
+}

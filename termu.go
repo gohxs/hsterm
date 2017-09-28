@@ -60,12 +60,11 @@ type Term struct {
 
 //New instantiates a new Terminal handler
 func New() *Term {
+	writer, err := term.NewStdoutWriter(os.Stdout)
+	if err != nil {
+		writer = os.Stdout // pure stdout?
 
-	//inFile := term.Stdin
-	//outFile := term.Stdout
-	// For windows only
-	//inFD := syscall.STD_INPUT_HANDLE
-	//outFD := syscall.STD_OUTPUT_HANDLE
+	}
 
 	ret := &Term{
 		Display:      nil,
@@ -79,11 +78,11 @@ func New() *Term {
 
 		// TODO: Way to change this
 		inReader:  os.Stdin,
-		outWriter: os.Stdout,
+		outWriter: os.Stdout, // Why?
 
 		// Accept readwriter like golang.org/x/crypt/ssh/terminal
-		Reader: term.NewStdinReader(os.Stdin),   // Reader
-		Writer: term.NewStdoutWriter(os.Stdout), // TODO: for now
+		Reader: term.NewStdinReader(os.Stdin), // Reader
+		Writer: writer,                        // TODO: for now
 		//m:      sync.Mutex{},
 	}
 
@@ -93,7 +92,7 @@ func New() *Term {
 // ReadLine will wait for further input until results is satisfie
 // (i.e: a line is readed)
 func (t *Term) ReadLine() (string, error) {
-	t.width = t.GetWidth() // Update width actually
+	t.width, _ = t.GetSize() // Update width actually
 
 	ifile, ok := t.inReader.(*os.File)
 	if !ok || (ok && !termutils.IsTerminal(int(ifile.Fd()))) {
@@ -115,25 +114,22 @@ func (t *Term) ReadLine() (string, error) {
 	// Get A STDIN Reader here windows is different
 	// Prepare a reader and writer here
 
-	reader := t.Reader //erm.NewStdinReader(ifile) // Wrapper for windows/unix
-	//	t.m.Lock()
-	{ // Terminal must support Ansi codes, i.e: writer Wrapper
-		t.out.WriteString("\033[s") // Save cursor now?
-		t.out.WriteString(t.PromptString())
-		t.Flush()
-	}
-	//	t.m.Unlock()
+	reader := t.Reader          //erm.NewStdinReader(ifile) // Wrapper for windows/unix
+	t.out.WriteString("\033[s") // Save cursor now?
+	t.out.WriteString(t.promptString())
+	t.Flush()
 
 	//
 	rinput := ansi.NewReader(reader)
 
 	for {
-		t.width = t.GetWidth() // Update width actually
+		t.width, _ = t.GetSize() // Update width actually
 		val, err := rinput.ReadEscape()
 		if err != nil {
 			return "", err
 		}
 		// Do some keyMapping, (i.e: MoveNext: "\t")
+		// Plugable Modes like the readline
 
 		// Select handler here
 		//
@@ -142,30 +138,24 @@ func (t *Term) ReadLine() (string, error) {
 		case "\x15": // CtrlU
 			t.Write([]byte("\033[H"))
 		case "\x0C": // CtrlL
-			ab := ansi.NewHelper(&t.out)
+			ab := ansi.NewHelperDirect(&t.out)
 			ab.WriteString("\033[2J\033[H") // Clear and save?
 			ab.SaveCursor()
 			t.Flush()
-			//continue
+
 		case "\x04": //EOT // CtrlD
-			//t.ClearPrompt()
-			t.out.WriteString(t.PromptString()) // Get String
+			t.out.WriteString(t.promptString()) // Get String
 			continue
 		case "\x03": // CtrlC
 			return "", ErrInterrupt // Interrupt return
 		case "\r", "\n": // ENTER COMPLETE enter // Process input
-			// Process thing somewhere else
-			t.inbuf.CursorToEnd() // Index to end of prompt what if?
-			//			t.m.Lock()
-			{
-				t.addLine = 0
-				t.out.WriteString("\n")             // Line feed directly
-				ansi.NewHelper(&t.out).SaveCursor() // ansi for just save cursor?
-				t.Flush()                           // Send to terminal
-			}
-			//			t.m.Unlock()
+			//t.inbuf.CursorToEnd() // Index to end of prompt what if?
+			t.addLine = 0
+			t.out.WriteString("\n")                   // Line feed directly
+			ansi.NewHelperDirect(&t.out).SaveCursor() // ansi for just save cursor?
+			t.Flush()                                 // Send to terminal
 			if t.inbuf.Len() == 0 {
-				t.out.WriteString(t.PromptString()) // Reprint prompt
+				t.out.WriteString(t.promptString()) // Reprint prompt
 				t.Flush()                           // Send to terminal
 				continue
 			}
@@ -174,12 +164,14 @@ func (t *Term) ReadLine() (string, error) {
 
 			line := t.inbuf.String()
 			t.inbuf.Clear()
-			//log.Println("Return line")
 			return line, nil
 		}
 
-		//t.RestoreCursor()
 		switch val.Value {
+		case "\033f": // Word back
+			t.inbuf.CursorWordForward()
+		case "\033b": // Word back
+			t.inbuf.CursorWordBack()
 		case "\033[3~": // Escape key delete Weird keys
 			t.inbuf.Delete()
 		case "\b", "\x7f":
@@ -196,7 +188,6 @@ func (t *Term) ReadLine() (string, error) {
 			if val.Type != ansi.TypeRune {
 				continue
 			}
-
 			ch, _ := utf8.DecodeRuneInString(val.Value)
 			// Go through auto complete
 			complete := false
@@ -212,88 +203,65 @@ func (t *Term) ReadLine() (string, error) {
 			if !complete && unicode.IsPrint(ch) { // Do not add the tab
 				t.inbuf.WriteString(val.Value)
 			}
-			//Flush what?
-			//t.Flush()
 		}
 		// Lock here
-		//t.ResetPromptCursor()
-		//t.m.Lock()
-		t.out.WriteString(t.PromptString())
+		t.out.WriteString(t.promptString())
 		t.Flush()
-
-		// Internal type should never be exposedt.Flush()
-		//t.m.Unlock()
-
-		//t.m.Unlock()
 	}
 	log.Println("Readline exited")
 	return "", nil
 }
 
-// can be calledi n other thread and a Flush triggered
+//Write can be called by any other thread and a Flush triggered
 func (t *Term) Write(b []byte) (n int, err error) {
 	if len(b) == 0 {
 		return 0, nil
 	}
-	/*t.m.Lock()
-	defer t.m.Unlock()*/
-	// Write to temporary buffer
 	t.addLine = 0
-	if b[len(b)-1] != '\n' { // Write enter if inexistent
+	if b[len(b)-1] != '\n' { // Prompt will show below the last cursor in next print
 		t.addLine = 1
 	}
-
-	if !t.reading { // Pure write
+	if !t.reading { //Pass through
 		n, err = t.out.Write(b)
-		t.Flush()
+		t.Flush() // Cursor thing
 		return
 	}
 
-	buf := bytes.NewBuffer(nil)
-	ab := ansi.NewHelper(buf)
+	ab := ansi.NewHelperBuffered(&t.out)
 
-	ab.RestoreCursor()
-	ab.WriteString("\033[K") // Clear after restore
+	ab.RestoreCursor() // Restoring cursor does not work in some terminals
+	// XXX: Bug, this prevent us to manipulate the lines while writing
+	// Ideally we would clear the prompt only
+	ab.WriteString("\033[K") // Clear after restore? before? Wrong
 	ab.Write(b)
 	if len(b) == 1 {
-		ab.WriteString(" \b")
+		ab.WriteString(" \b") // Linux things to force line change
 	}
-
 	ab.SaveCursor()
 
-	ab.WriteString(t.PromptString())
-	// Finish
-	t.out.Write(buf.Bytes())
+	ab.WriteString(t.promptString())
+	ab.Flush()
 	t.Flush()
 
 	return
 }
 
-func (t *Term) GetWidth() int {
+//GetSize get terminal size returns 0,0 on error
+func (t *Term) GetSize() (w int, h int) {
 	f, ok := t.outWriter.(*os.File)
 	if !ok {
-		return -1
-	}
-	w, _, err := termutils.GetSize(int(f.Fd()))
-	if err != nil {
-		return -1
+		return
 	}
 
-	return w
-}
-func (t *Term) GetHeight() int {
-	f, ok := t.outWriter.(*os.File)
-	if !ok {
-		return -1
-	}
-	_, h, err := termutils.GetSize(int(f.Fd()))
+	iw, ih, err := termutils.GetSize(int(f.Fd()))
 	if err != nil {
-		return -1
+		return
 	}
-	return h
+
+	return iw, ih
 }
 
-// SetPrompt sets the terminal prompt
+//SetPrompt sets the terminal prompt
 func (t *Term) SetPrompt(p string) {
 	t.prompt = p
 }
@@ -309,27 +277,36 @@ func (t *Term) PromptLineCount() int {
 	return ((t.inbuf.Len() + len(t.prompt)) / width) + 1 // Always one line
 }
 
-// PromptString Returns the prompt string proper escaped
-func (t *Term) PromptString() string {
-	buf := bytes.NewBuffer(nil)
-	ab := ansi.NewHelper(buf)
+//XXX: Private
+// Reset Prompt Cursor
+func (t *Term) CleanPromptString() string {
+	return ""
+}
 
-	ab.RestoreCursor()
+//TODO: This should be private
+//PromptString Returns the prompt string proper escaped
+func (t *Term) promptString() string {
+	ab := ansi.NewHelperBuffered(nil)
+	ab.RestoreCursor() // Or prompt clear
 	//For redraw
-	//t.RestoreCursor() // Last output position
 	count := t.PromptLineCount() - 1 + t.addLine
-
 	if count > 0 { // Move back input and thing buffer?
-		ab.WriteString(strings.Repeat("\n", count)) // Form feed if necessary
-		ab.RestoreCursor()
-		ab.MoveDown(count) // Trick to positioning cursor?
+		// Scroll hack
+		// with restore cursor, if it is at last line,
+		// it will scroll up any remaining text repeating the top line of the prompt
+		// We line feed the number of lines prompt will have
+		// but since the cursor will go to 0 position, we have to:
+		// restore again,
+		// As the cursor is at bottom line, so we moveDown (will not move if in bottom)
+		// and move up back to desired position, saving the cursor for the next Write
+		// if the cursor is not on the last line it will perform movements and
+		// will end up same position
+		ab.WriteString(strings.Repeat("\n", count)) // Form feed if necessary // implemente on windows somehow
+		ab.RestoreCursor()                          // Move back
+		ab.MoveDown(count)                          //
 		ab.MoveUp(count)
-		//ab.MoveDown(
-		//ab.WriteString(fmt.Sprintf("\033[%dA", count)) // Go down, go up, and left
-
-		//ab.WriteString(fmt.Sprintf("\033[%dA", count)) // Go down, go up, and left
-	}
-	ab.SaveCursor() // Save cursor again
+		ab.SaveCursor() // Save cursor again
+	} /**/
 
 	// Transform output
 	var dispBuf string
@@ -342,24 +319,22 @@ func (t *Term) PromptString() string {
 	}
 
 	ab.WriteString(strings.Repeat("\n", t.addLine))
-
 	ab.WriteString(strings.Repeat("\033[K", t.PromptLineCount())) // N lines
 
-	ab.WriteString(t.prompt)
+	// Here we are printing display
+	ab.WriteString("\r" + t.prompt)
 	ab.WriteString(dispBuf)
 
 	// If unix only
 	if term.Variant == term.VariantUnix {
 		ab.WriteString(" \b")
 	}
-	ab.WriteString("\033[J") // Clean Rest of the screen
 
-	//ab.WriteString("\033[J") // Maybe rest of the line
-	//fmt.Sprintf("%s%s \b\033[J", t.prompt, dispBuf)) // Erase after prompt?
-
+	//XXX: if we add a special printer that prints bellow
+	//screen it will becleared, so we need to only clear the LINE2
+	//ab.WriteString("\033[K") // Clean Rest of the line
+	ab.WriteString("\033[J") // Maybe rest of the line
 	// Position cursor // Reposition cursor here??
-	//
-
 	// No unicode for now
 	width := min(t.width, 1)
 
@@ -375,7 +350,7 @@ func (t *Term) PromptString() string {
 	// Go back instead of up
 	lineCount -= t.addLine
 
-	ab.MoveUp(lineCount)
+	ab.MoveUp(lineCount) // Origin
 	ab.WriteString("\r") // go back anyway
 	ab.MoveDown(desiredLine)
 	ab.MoveRight(desiredCol)
@@ -386,7 +361,7 @@ func (t *Term) PromptString() string {
 		ab.WriteString(fmt.Sprintf("\033[%dD", curLeft)) // ? huh
 	}*/
 
-	return buf.String()
+	return ab.String()
 
 }
 

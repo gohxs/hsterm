@@ -117,7 +117,7 @@ func buildComplete(t *termu.Term) func(string, int, rune) (string, int, bool) {
 		space := strings.Index(res[pos:], " ") // current position forward
 
 		if space > 0 { // only positive space
-			res = res[:pos+space]
+			res = res[:pos+space] + " "
 		}
 		if res != line { // reset tab if line changed
 			tab = 0
@@ -142,7 +142,7 @@ func utilSplitN(s string, sep string, targets ...*string) (n int) {
 
 func highlight(input string) string {
 	buf := bytes.NewBuffer([]byte{})
-	err := quick.Highlight(buf, input, "bash", "terminal16m", "monokaim")
+	err := quick.Highlight(buf, input, "sql", "terminal", "monokaim")
 	//err := quick.Highlight(buf, input, "bash", "terminal16m", "monokaim")
 	if err != nil {
 		log.Fatal(err)

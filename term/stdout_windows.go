@@ -1,3 +1,5 @@
+// This area is a TerminalWriter
+
 // +build windows
 
 package term
@@ -5,7 +7,6 @@ package term
 import (
 	"bytes"
 	"io"
-	"log"
 	"os"
 	"unsafe"
 
@@ -13,11 +14,21 @@ import (
 	"github.com/gohxs/termu/term/termutils"
 )
 
+// Missing ANSI/VT
+//\033[E -- \033[5E   Move to first position of 5th line down
+//\033[F -- \033[5F   Move to first position of 5th line previous
+//\033[G -- \033[40G  Move to column 40 of current line
+//\033[M -- \033[2M   Delete 2 lines if currently in scrolling region
+//
+//\033[S -- \033[3S   Move everything up 3 lines, bring in 3 new lines
+//\033[T -- \033[4T   Scroll down 4, bring previous lines back into view
+
+//\033[7m--  Background, foreground invert
+//
 const (
 	COMMON_LVB_UNDERSCORE = 0x8000
 )
 
-// Pos hold cursor position on \033[s
 type Pos struct {
 	x, y int
 }
@@ -25,41 +36,42 @@ type Pos struct {
 type stdoutWriter struct {
 	io.Writer         // Original writer
 	fd        uintptr // file descriptor
-	err       error
 	storedPos Pos
 	lastColor word
 }
 
 //NewStdoutWriter windows Ansi writer
-func NewStdoutWriter(w io.Writer) io.Writer {
+func NewStdoutWriter(w io.Writer) (io.Writer, error) {
+	var fd int
 
-	var (
-		err error
-		fd  uintptr
-	)
 	f, ok := w.(*os.File)
 	if !ok {
-		err = ErrNotTerminal // should fail
-		return w
+		return nil, ErrNotTerminal // should fail
 	}
 
-	fd = uintptr(f.Fd())
-	st, err := termutils.GetState(int(fd))
-	st.Mode |= 0x0004 // Enable VT input
-	err = termutils.Restore(int(fd), st)
-	if err != nil {
-		log.Println("Unable to set term", err)
-		//return &stdoutWriter{Writer: w, fd: fd, err: err}
+	fd = int(f.Fd())
+	if !termutils.IsTerminal(fd) {
+		return nil, ErrNotTerminal
 	}
-	log.Println("Passing same writer")
-	return w // Just passtrough
+
+	// Lets emulate always for testing
+	return &stdoutWriter{Writer: w, fd: uintptr(fd)}, nil // Emulated
+
+	st, err := termutils.GetState(fd)
+	if err != nil {
+		return nil, err
+	}
+
+	st.Mode |= 0x0004 // Enable VT output // new windows versions
+	err = termutils.Restore(fd, st)
+	if err != nil {
+		return &stdoutWriter{Writer: w, fd: uintptr(fd)}, nil // Emulated
+	}
+	return w, nil // Just passtrough
 
 }
 
 func (w *stdoutWriter) Write(b []byte) (written int, err error) {
-	if w.err != nil {
-		return 0, err
-	}
 
 	// Or create a pipe and loop
 	br := bytes.NewReader(b) // Read whateever is in b
@@ -69,6 +81,34 @@ func (w *stdoutWriter) Write(b []byte) (written int, err error) {
 		val, err := ar.ReadEscape()
 		if err != nil {
 			return 0, err
+		}
+
+		if val.Value == "\f" { // Specific case like \n without \r in OPOST mode
+			info, err := GetConsoleScreenBufferInfo(w.fd)
+			if err != nil {
+				return 0, err
+			}
+			storedX := info.dwCursorPosition.x
+			n, err := w.Writer.Write([]byte("\n")) // Go back one
+			written += n
+			if err != nil {
+				return written, err
+			}
+
+			// Restore X position only
+			info, err = GetConsoleScreenBufferInfo(w.fd) // Get new position
+			if err != nil {
+				return 0, err
+			}
+
+			info.dwCursorPosition.x = storedX
+			err = SetConsoleCursorPosition(w.fd, &info.dwCursorPosition)
+			if err != nil {
+				return 0, err
+			}
+			continue
+			// Send feed
+
 		}
 
 		if val.Type == ansi.TypeEscape {
@@ -118,28 +158,46 @@ func (w *stdoutWriter) Write(b []byte) (written int, err error) {
 				_ = w.EraseDisplay(lookIndex(val.Attr, 0, 0))
 			case "\x1B[m":
 				//color := word(0) // color 0?
-				color := word(0x7) // Default reset ?
+				color := w.lastColor // Default reset ?
 				//intensity := 0
 
-				for _, c := range val.Attr {
+				if len(val.Attr) == 0 { // same as reset "\033[m"
+					color = word(0x07)
+				}
+				attrs := val.Attr
+				for ; len(attrs) > 0; attrs = attrs[1:] {
+					c := attrs[0]
 					switch {
 					case c == 0:
-						color = word(0x07)
-					case c == 1: // Foregroundintensity
+						color = word(0x07) // Reset
+					case c == 1: // Foregroundintensity and maybe bold
 						color |= 0x08
-					case c >= 30 && c < 37:
-						c -= 30
-						bits := ((c & 0x1) << 2) | c&0x2 | ((c & 0x4) >> 2) // swap bit 1 and 3
-						color = color&0xFFF8 | word(bits)                   // Invert red blue
-					case c >= 40 && c < 47:
-						c -= 40
-						bits := ((c & 0x1) << 2) | c&0x2 | ((c & 0x4) >> 2) // swap bit 1 and 3
-						color = color&0xFF8F | (word(bits << 4))            // Invert red blue
 					case c == 4:
 						color |= COMMON_LVB_UNDERSCORE | 0x7
+					case c == 7: // Swap bits
+						tmpFg := color & 0x7       // 3 bits
+						tmpBg := color & 0x70 >> 4 // 3 bits
+
+						color = color&0XFFF8 | word(tmpBg)
+						color = color&0XFF8F | word(tmpFg<<4)
+					case c >= 30 && c <= 37:
+						c -= 30
+						bits := ((c & 0x1) << 2) | c&0x2 | ((c & 0x4) >> 2) // swap bit 1 and 3
+						color = color&0xFFF8 | word(bits)
+					case c >= 40 && c <= 47:
+						c -= 40
+						bits := ((c & 0x1) << 2) | c&0x2 | ((c & 0x4) >> 2) // swap bit 1 and 3
+						color = color&0xFF8F | (word(bits << 4))
+					case c == 38: // Next should be 5
+						n := lookIndex(attrs, 1, -1)
+						c256 := lookIndex(attrs, 2, -1)
+						if n >= 0 && c256 >= 0 {
+							attrs = attrs[2:]
+						}
+						// Translate 256 to 16 here
 					}
 				}
-				w.lastColor = color
+				w.lastColor = color // save color state
 				kernel.SetConsoleTextAttribute(w.fd, uintptr(color))
 			case "\x1B[?l", "\x1B[?h": // Feature on, feature off
 				if len(val.Attr) == 0 {

@@ -9,133 +9,134 @@ type runestring []rune
 
 //InputBuffer extra buffer handling
 type InputBuffer struct {
-	//buf       []string // multiple struct // Multiline
-	buf       runestring
-	curLine   int
-	cursIndex int // cur CurrentLine
+	buf   runestring
+	index int // cur CurrentLine
 }
 
+//NewInputBuffer create an index inputBuffer
 func NewInputBuffer() *InputBuffer {
-	return &InputBuffer{runestring{}, 0, 0}
+	return &InputBuffer{runestring{}, 0}
 }
 
+//Set new input and move cursor to end
 func (ib *InputBuffer) Set(val string) {
 	ib.buf = runestring(val)
 	ib.CursorToEnd()
 }
+
+//WriteByte writes a byte to buffer
 func (ib *InputBuffer) WriteByte(r byte) {
-	//	line := ib.buf[ib.curLine]
-	//	line = line[:ib.cursIndex] + string(r) + line[ib.cursIndex:]
-	//	ib.buf[ib.curLine] = line
-
-	ib.buf = append(ib.buf[:ib.cursIndex], runestring(string(r))...)
-	ib.buf = append(ib.buf, ib.buf[ib.cursIndex:]...)
-	//ib.buf[:ib.cursIndex] + runestring(string(r)) + ib.buf[ib.cursIndex:]
-
-	ib.cursIndex++
+	ib.buf = append(ib.buf[:ib.index], rune(r))
+	ib.buf = append(ib.buf, ib.buf[ib.index:]...)
+	ib.index++
 }
 
-//WriteRune  Add rune to input buffer
+//WriteRune write rune to current index in input buffer and increase index
 func (ib *InputBuffer) WriteRune(r rune) {
-	//line := ib.buf[ib.curLine]
-	//line = line[:ib.cursIndex] + string(r) + line[ib.cursIndex:]
-	//ib.buf[ib.curLine] = line
-	ib.buf = append(ib.buf, r)
-	ib.cursIndex++
-	//ib.cursIndex += utf8.RuneLen(r) // Wrong
+	ib.buf = append(ib.buf[:ib.index], r)
+	ib.buf = append(ib.buf, ib.buf[ib.index:]...)
+	ib.index++
 }
 
 //WriteString add string to input buffer
 func (ib *InputBuffer) WriteString(s string) {
-	//line := ib.buf[ib.curLine]
-	//line = line[:ib.cursIndex] + s + line[ib.cursIndex:]
-	//ib.buf[ib.curLine] = line
-	//
-	for _, r := range s { // go from rune to rune
-		ib.buf = append(ib.buf, r)
-		ib.cursIndex++ // len(s)
-	}
+	// go from rune to rune due to some unicode chars?
+	rs := runestring(s) // Maybe is not right
+	ln := len(rs)
+
+	ib.buf = append(ib.buf[:ib.index], append(rs, ib.buf[ib.index:]...)...)
+	ib.index += ln
 }
 
-//Clear - it clears everything from the buffer
+//Clear - it clears everything from the buffer and set index 0
 func (ib *InputBuffer) Clear() { // What? all?
 	ib.buf = runestring{}
-	ib.curLine = 0
-	ib.cursIndex = 0
+	ib.index = 0
 }
 
-// Remove last rune not last byte
+//Remove left rune from current index
 func (ib *InputBuffer) Backspace() {
-	if ib.cursIndex == 0 {
+	if ib.index == 0 {
 		return
 	}
-	//line := ib.buf[ib.curLine]
-	//line = line[:ib.cursIndex-1] + line[ib.cursIndex:]
-	//ib.buf[ib.curLine] = line
-	ib.buf = append(ib.buf[:ib.cursIndex-1], ib.buf[ib.cursIndex:]...)
-	ib.cursIndex = min(ib.cursIndex-1, 0)
+	ib.buf = append(ib.buf[:ib.index-1], ib.buf[ib.index:]...)
+	ib.index = min(ib.index-1, 0)
 }
 
+//Remove right rune from current index
 func (ib *InputBuffer) Delete() {
-	if ib.cursIndex >= len(ib.buf) { // ignroe?
+	if ib.index >= len(ib.buf) {
 		return
 	}
-	//line := ib.buf[ib.curLine]
-	//line = line[:ib.cursIndex] + line[ib.cursIndex+1:]
-	//ib.buf[ib.curLine] = line
-	ib.buf = append(ib.buf[:ib.cursIndex], ib.buf[ib.cursIndex+1:]...)
+	ib.buf = append(ib.buf[:ib.index], ib.buf[ib.index+1:]...)
 }
 
+//SetCursor change rune index
 func (ib *InputBuffer) SetCursor(n int) {
-	ib.cursIndex = max(min(n, 0), len(ib.buf))
-}
-func (ib *InputBuffer) Cursor() int {
-	return ib.cursIndex
+	ib.index = max(min(n, 0), len(ib.buf))
 }
 
+//Cursor get the index
+func (ib *InputBuffer) Cursor() int {
+	return ib.index
+}
+
+//LenBytes size in bytes of the rune
 func (ib *InputBuffer) LenBytes() int {
 	return len(string(ib.buf))
 }
+
+//Len amount of runes
 func (ib *InputBuffer) Len() int {
 	return len(ib.buf)
 }
 
-// All?
+//String the buffer string
 func (ib *InputBuffer) String() string {
 	return string(ib.buf)
 }
 
+//CursorToStart move index to the buffer beginning = 0
 func (ib *InputBuffer) CursorToStart() {
-	ib.cursIndex = 0
+	ib.index = 0
 }
+
+//CursorToEnd move index to the last rune
 func (ib *InputBuffer) CursorToEnd() {
-	ib.cursIndex = len(ib.buf)
+	ib.index = len(ib.buf)
 }
+
+//CursorRight move index 1 rune right
 func (ib *InputBuffer) CursorRight() {
-	ib.cursIndex = max(ib.cursIndex+1, len(ib.buf))
+	ib.index = max(ib.index+1, len(ib.buf))
 }
+
+//CursorLeft moves index 1 rune left
 func (ib *InputBuffer) CursorLeft() {
-	ib.cursIndex = min(ib.cursIndex-1, 0)
+	ib.index = min(ib.index-1, 0)
 }
+
+//CursorWordBack moves the index to the previous word
 func (ib *InputBuffer) CursorWordBack() {
-	sl := string(ib.buf[:ib.cursIndex])
+	sl := string(ib.buf[:ib.index])
 	// trim sl
 	sl = strings.TrimRight(sl, " ")
 	in := min(strings.LastIndex(sl, " ")+1, 0)
-	ib.cursIndex = in
+	ib.index = in
 }
 
+//CursorWordForward moves the index to the next word
 func (ib *InputBuffer) CursorWordForward() {
-	sl := string(ib.buf[ib.cursIndex:])
+	sl := string(ib.buf[ib.index:])
 
 	clen := len(sl)
 	sl = strings.TrimLeft(sl, " ")
-	ib.cursIndex += clen - len(sl) // move to next char
+	ib.index += clen - len(sl) // move to next char
 
 	in := strings.Index(sl, " ")
 	if in == -1 {
-		ib.cursIndex = len(ib.buf) // move to last
+		ib.index = len(ib.buf) // move to last
 		return
 	}
-	ib.cursIndex += in
+	ib.index += in
 }
