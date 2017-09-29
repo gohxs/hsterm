@@ -158,6 +158,8 @@ func GetSize(fd int) (width, height int, err error) {
 	}
 	return int(info.size.x), int(info.size.y), nil
 }
+
+// Private helpers
 func getConsoleScreenBufferInfo(fd uintptr) (*consoleScreenBufferInfo, error) {
 	var info consoleScreenBufferInfo
 	_, _, e := syscall.Syscall(procGetConsoleScreenBufferInfo.Addr(), 2, uintptr(fd), uintptr(unsafe.Pointer(&info)), 0)

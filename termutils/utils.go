@@ -1,5 +1,7 @@
 package termutils
 
+// Common utils
+//
 // gets first Value else leave it
 func lookIndex(a []int, index int, def int) int {
 	if index < len(a) && index >= 0 {
