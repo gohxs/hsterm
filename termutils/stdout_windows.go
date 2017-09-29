@@ -24,7 +24,8 @@ import (
 //\033[7m--  Background, foreground invert
 //
 const (
-	COMMON_LVB_UNDERSCORE = 0x8000
+	commonLVBUnderscore = 0x8000
+	commonLVBReverse    = 0x4000
 )
 
 type Pos struct { // cursor?
@@ -144,13 +145,9 @@ func (w *stdoutWriter) Write(b []byte) (written int, err error) {
 					case c == 1: // Foregroundintensity and maybe bold
 						color |= 0x08
 					case c == 4:
-						color |= COMMON_LVB_UNDERSCORE | 0x7
-					case c == 7: // Swap bits
-						tmpFg := color & 0x7       // 3 bits
-						tmpBg := color & 0x70 >> 4 // 3 bits
-
-						color = color&0XFFF8 | word(tmpBg)
-						color = color&0XFF8F | word(tmpFg<<4)
+						color |= commonLVBUnderscore | 0x7
+					case c == 7: // Swap bits // Reverse video mode
+						color |= commonLVBReverse
 					case c >= 30 && c <= 37:
 						c -= 30
 						bits := ((c & 0x1) << 2) | c&0x2 | ((c & 0x4) >> 2) // swap bit 1 and 3

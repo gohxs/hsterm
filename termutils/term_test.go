@@ -111,6 +111,7 @@ func TestColors(t *testing.T) {
 	fmt.Fprintln(tw, "\033[35mMAGENTA\033[01;35mMAGENTA\033[45mMAGENTA\033[0m rest")
 	fmt.Fprintln(tw, "\033[36mCYAN\033[01;36mCYAN\033[46mMAGENTA\033[0m rest")
 	fmt.Fprintln(tw, "\033[37mWHITE\033[01;37mWHITE\033[47mWHITE\033[0m rest")
+	fmt.Fprintln(tw, "\033[31mcolor\033[7mreverse\033[34mcolorchange\033[m rest")
 
 	fmt.Fprintln(tw, "\033[01mcolor\033[m\033[30m\033[47m Separated\033[m")
 
