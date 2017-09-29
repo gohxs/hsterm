@@ -40,6 +40,8 @@ TODO
   * [X] String manipulation
   * [ ] Cursor manipulation runeWidth
 * [ ] Prepare completer maybe (readline)
-* [ ] History search (readline)
+* [X] History search (readline)
+  * kind of since it is workign like shell who needs history back search?
 * [X] Project rename, hsterm was *not* a good name
 * [X] Show a progress bar and prompt at same time
+* [X] ansi.Reader is now ansi.Scanner

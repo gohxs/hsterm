@@ -137,7 +137,7 @@ func (t *Term) ReadLine() (string, error) {
 		case "\x0C": // CtrlL
 			ab := ansi.NewHelperDirect(&t.out)
 			ab.WriteString("\033[2J\033[H") // Clear and save?
-			ab.SaveCursor()
+			//ab.SaveCursor()
 			t.Flush()
 
 		case "\x04": //EOT // CtrlD
@@ -160,9 +160,9 @@ func (t *Term) ReadLine() (string, error) {
 
 			//t.prompt.CursorToEnd() // Index to end of prompt what if?
 			t.prompt.extraLine = 0
-			t.out.WriteString("\n")                   // Line feed directly
-			ansi.NewHelperDirect(&t.out).SaveCursor() // ansi for just save cursor?
-			t.Flush()                                 // Send to terminal
+			t.out.WriteString("\n") // Line feed directly
+			//ansi.NewHelperDirect(&t.out).SaveCursor() // ansi for just save cursor?
+			t.Flush() // Send to terminal
 			if t.prompt.Len() == 0 {
 				t.out.WriteString(t.prompt.DisplayString()) // Reprint prompt
 				t.Flush()                                   // Send to terminal

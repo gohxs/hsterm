@@ -73,10 +73,11 @@ func (p *Prompt) DisplayString() string {
 	// Count lines -- in rawDispBuf
 
 	ab := ansi.NewHelperBuffered(nil)
+	count := lineCount - 1 + p.extraLine // We need to check with the input
+
 	ab.RestoreCursor() // Or prompt clear
 	//For redraw
-	count := lineCount - 1 + p.extraLine // We need to check with the input
-	if count > 0 {                       // Move back input and thing buffer?
+	if count > 0 { // Move back input and thing buffer?
 		// Scroll hack
 		// with restore cursor, if it is at last line,
 		// it will scroll up any remaining text repeating the top line of the prompt
