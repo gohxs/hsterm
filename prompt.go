@@ -3,10 +3,10 @@ package termu
 // Prompt handles the prompt area of the readline,
 // Including any extra things
 import (
+	"runtime"
 	"strings"
 
 	"github.com/gohxs/termu/ansi"
-	"github.com/gohxs/termu/term"
 )
 
 type Prompt struct {
@@ -104,7 +104,7 @@ func (p *Prompt) DisplayString() string {
 	ab.WriteString(dispBuf)
 
 	// If not windows
-	if term.Variant == term.VariantUnix {
+	if runtime.GOOS != "windows" {
 		ab.WriteString(" \b")
 	}
 

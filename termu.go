@@ -17,8 +17,7 @@ import (
 
 	"github.com/gohxs/prettylog"
 	"github.com/gohxs/termu/ansi"
-	"github.com/gohxs/termu/term"
-	"github.com/gohxs/termu/term/termutils"
+	"github.com/gohxs/termu/termutils"
 )
 
 var (
@@ -58,7 +57,7 @@ type Term struct {
 
 //New instantiates a new Terminal handler
 func New() *Term {
-	writer, err := term.NewStdoutWriter(os.Stdout)
+	writer, err := termutils.NewStdoutWriter(os.Stdout)
 	if err != nil {
 		writer = os.Stdout // pure stdout?
 
@@ -77,8 +76,8 @@ func New() *Term {
 		outWriter: os.Stdout, // Why?
 
 		// Accept readwriter like golang.org/x/crypt/ssh/terminal
-		Reader: term.NewStdinReader(os.Stdin), // Reader
-		Writer: writer,                        // TODO: for now
+		Reader: termutils.NewStdinReader(os.Stdin), // Reader
+		Writer: writer,                             // TODO: for now
 		//m:      sync.Mutex{},
 	}
 	ret.prompt = newPrompt(ret)

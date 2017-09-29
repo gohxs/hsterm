@@ -2,17 +2,21 @@ package main
 
 import (
 	"log"
-	"os"
 	"runtime"
 
-	"github.com/gohxs/termu/term/termutils"
+	"github.com/gohxs/termu"
 )
 
 func main() {
 	log.Println("runtime.GOOS: ", runtime.GOOS)
 
-	state, err := termutils.GetState(int(os.Stdin.Fd()))
+	t := termu.New()
+	t.SetPrompt("Win> ")
 
-	state.Mode |= 0x2000
+	s := termu.NewScanner(t)
+	for s.Scan() {
+		ln := s.Text()
+		log.Println("Bye:", ln)
+	}
 
 }
