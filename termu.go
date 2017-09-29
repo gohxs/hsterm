@@ -10,7 +10,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"strings"
 	"sync"
 	"time"
 	"unicode"
@@ -36,8 +35,7 @@ type Term struct {
 	AutoComplete func(line string, pos int, key rune) (newLine string, newPos int, ok bool)
 	// Internals
 	History History // Expose history
-	inbuf   *InputBuffer
-	prompt  string
+	prompt  *Prompt
 	width   int
 
 	Log    *log.Logger
@@ -70,10 +68,8 @@ func New() *Term {
 		Display:      nil,
 		AutoComplete: nil,
 		// Internals
-		inbuf:   NewInputBuffer(),
-		prompt:  "",
 		width:   0,
-		History: &history{},
+		History: &history{}, // Wrong why?
 		Log:     prettylog.Dummy(),
 
 		// TODO: Way to change this
@@ -85,6 +81,7 @@ func New() *Term {
 		Writer: writer,                        // TODO: for now
 		//m:      sync.Mutex{},
 	}
+	ret.prompt = newPrompt(ret)
 
 	return ret
 }
@@ -116,15 +113,15 @@ func (t *Term) ReadLine() (string, error) {
 
 	reader := t.Reader          //erm.NewStdinReader(ifile) // Wrapper for windows/unix
 	t.out.WriteString("\033[s") // Save cursor now?
-	t.out.WriteString(t.promptString())
+	t.out.WriteString(t.prompt.DisplayString())
 	t.Flush()
 
 	//
-	rinput := ansi.NewReader(reader)
+	rinput := ansi.NewScanner(reader)
 
 	for {
 		t.width, _ = t.GetSize() // Update width actually
-		val, err := rinput.ReadEscape()
+		val, err := rinput.Scan()
 		if err != nil {
 			return "", err
 		}
@@ -144,46 +141,46 @@ func (t *Term) ReadLine() (string, error) {
 			t.Flush()
 
 		case "\x04": //EOT // CtrlD
-			t.out.WriteString(t.promptString()) // Get String
+			t.out.WriteString(t.prompt.DisplayString()) // Get String
 			continue
 		case "\x03": // CtrlC
 			return "", ErrInterrupt // Interrupt return
 		case "\r", "\n": // ENTER COMPLETE enter // Process input
-			//t.inbuf.CursorToEnd() // Index to end of prompt what if?
+			//t.prompt.CursorToEnd() // Index to end of prompt what if?
 			t.addLine = 0
 			t.out.WriteString("\n")                   // Line feed directly
 			ansi.NewHelperDirect(&t.out).SaveCursor() // ansi for just save cursor?
 			t.Flush()                                 // Send to terminal
-			if t.inbuf.Len() == 0 {
-				t.out.WriteString(t.promptString()) // Reprint prompt
-				t.Flush()                           // Send to terminal
+			if t.prompt.Len() == 0 {
+				t.out.WriteString(t.prompt.DisplayString()) // Reprint prompt
+				t.Flush()                                   // Send to terminal
 				continue
 			}
 			// Append history
-			t.History.Append(t.inbuf.String())
+			t.History.Append(t.prompt.InputString())
 
-			line := t.inbuf.String()
-			t.inbuf.Clear()
+			line := t.prompt.InputString()
+			t.prompt.Clear()
 			return line, nil
 		}
 
 		switch val.Value {
 		case "\033f": // Word back
-			t.inbuf.CursorWordForward()
+			t.prompt.CursorWordForward()
 		case "\033b": // Word back
-			t.inbuf.CursorWordBack()
+			t.prompt.CursorWordBack()
 		case "\033[3~": // Escape key delete Weird keys
-			t.inbuf.Delete()
+			t.prompt.Delete()
 		case "\b", "\x7f":
-			t.inbuf.Backspace()
+			t.prompt.Backspace()
 		case "\033[A", "\x10": // Up or CtrlP
-			t.inbuf.Set(t.History.Prev(t.inbuf.String()))
+			t.prompt.SetInput(t.History.Prev(t.prompt.InputString()))
 		case "\033[B", "\x0E": // Down or CtrlN
-			t.inbuf.Set(t.History.Next(t.inbuf.String()))
+			t.prompt.SetInput(t.History.Next(t.prompt.InputString()))
 		case "\033[D", "\x02": // left or CtrlB
-			t.inbuf.CursorLeft()
+			t.prompt.CursorLeft()
 		case "\033[C", "\x06": // Right or ctrlF
-			t.inbuf.CursorRight()
+			t.prompt.CursorRight()
 		default: // Function that actually adds the text
 			if val.Type != ansi.TypeRune {
 				continue
@@ -192,24 +189,22 @@ func (t *Term) ReadLine() (string, error) {
 			// Go through auto complete
 			complete := false
 			if t.AutoComplete != nil {
-				newLine, newPos, ok := t.AutoComplete(t.inbuf.String(), t.inbuf.Cursor(), ch)
+				newLine, newPos, ok := t.AutoComplete(t.prompt.InputString(), t.prompt.Cursor(), ch)
 				if ok {
-					t.inbuf.Set(newLine) // Reset print here?
-					t.inbuf.SetCursor(newPos)
+					t.prompt.SetInput(newLine) // Reset print here?
+					t.prompt.SetCursor(newPos)
 					complete = true
 					//break
 				}
 			}
 			if !complete && unicode.IsPrint(ch) { // Do not add the tab
-				t.inbuf.WriteString(val.Value)
+				t.prompt.WriteString(val.Value)
 			}
 		}
 		// Lock here
-		t.out.WriteString(t.promptString())
+		t.out.WriteString(t.prompt.DisplayString())
 		t.Flush()
 	}
-	log.Println("Readline exited")
-	return "", nil
 }
 
 //Write can be called by any other thread and a Flush triggered
@@ -239,7 +234,7 @@ func (t *Term) Write(b []byte) (n int, err error) {
 	}
 	ab.SaveCursor()
 
-	ab.WriteString(t.promptString())
+	ab.WriteString(t.prompt.DisplayString())
 	ab.Flush()
 	t.Flush()
 
@@ -263,106 +258,7 @@ func (t *Term) GetSize() (w int, h int) {
 
 //SetPrompt sets the terminal prompt
 func (t *Term) SetPrompt(p string) {
-	t.prompt = p
-}
-
-//PromptLineCount helper to count wrapping lines
-func (t *Term) PromptLineCount() int {
-	//Count \n chars too
-	width := 1
-	if t.width > 0 {
-		width = t.width
-	}
-
-	return ((t.inbuf.Len() + len(t.prompt)) / width) + 1 // Always one line
-}
-
-//XXX: Private
-// Reset Prompt Cursor
-func (t *Term) CleanPromptString() string {
-	return ""
-}
-
-//TODO: This should be private
-//PromptString Returns the prompt string proper escaped
-func (t *Term) promptString() string {
-	ab := ansi.NewHelperBuffered(nil)
-	ab.RestoreCursor() // Or prompt clear
-	//For redraw
-	count := t.PromptLineCount() - 1 + t.addLine
-	if count > 0 { // Move back input and thing buffer?
-		// Scroll hack
-		// with restore cursor, if it is at last line,
-		// it will scroll up any remaining text repeating the top line of the prompt
-		// We line feed the number of lines prompt will have
-		// but since the cursor will go to 0 position, we have to:
-		// restore again,
-		// As the cursor is at bottom line, so we moveDown (will not move if in bottom)
-		// and move up back to desired position, saving the cursor for the next Write
-		// if the cursor is not on the last line it will perform movements and
-		// will end up same position
-		ab.WriteString(strings.Repeat("\n", count)) // Form feed if necessary // implemente on windows somehow
-		ab.RestoreCursor()                          // Move back
-		ab.MoveDown(count)                          //
-		ab.MoveUp(count)
-		ab.SaveCursor() // Save cursor again
-	} /**/
-
-	// Transform output
-	var dispBuf string
-	// Idea cache this, every time we print the thing, we transform
-	// if transformation is different than cache we redraw, else we put the difference
-	if t.Display != nil {
-		dispBuf = t.Display(t.inbuf.String())
-	} else {
-		dispBuf = t.inbuf.String()
-	}
-
-	ab.WriteString(strings.Repeat("\n", t.addLine))
-	ab.WriteString(strings.Repeat("\033[K", t.PromptLineCount())) // N lines
-
-	// Here we are printing display
-	ab.WriteString("\r" + t.prompt)
-	ab.WriteString(dispBuf)
-
-	// If unix only
-	if term.Variant == term.VariantUnix {
-		ab.WriteString(" \b")
-	}
-
-	//XXX: if we add a special printer that prints bellow
-	//screen it will becleared, so we need to only clear the LINE2
-	//ab.WriteString("\033[K") // Clean Rest of the line
-	ab.WriteString("\033[J") // Maybe rest of the line
-	// Position cursor // Reposition cursor here??
-	// No unicode for now
-	width := min(t.width, 1)
-
-	inbufLen := t.inbuf.Len() // Should count rune width
-	fullWidth := len(t.prompt) + inbufLen
-
-	cursorWidth := fullWidth - (inbufLen - t.inbuf.Cursor())
-	lineCount := count
-
-	desiredLine := (cursorWidth / width) // get Line position starting from prompt
-	desiredCol := cursorWidth % width    // get column position starting from prompt
-
-	// Go back instead of up
-	lineCount -= t.addLine
-
-	ab.MoveUp(lineCount) // Origin
-	ab.WriteString("\r") // go back anyway
-	ab.MoveDown(desiredLine)
-	ab.MoveRight(desiredCol)
-
-	/*dispLen := t.inbuf.Len()
-	curLeft := (dispLen - t.inbuf.Cursor())
-	if curLeft != 0 && dispLen > 0 {
-		ab.WriteString(fmt.Sprintf("\033[%dD", curLeft)) // ? huh
-	}*/
-
-	return ab.String()
-
+	t.prompt.SetPrompt(p)
 }
 
 var flushMutex sync.Mutex
@@ -388,10 +284,10 @@ func (t *Term) Flush() {
 	// lock while flushing
 	//
 	// Debugger
-	rd := ansi.NewReader(bytes.NewReader(t.out.Bytes()))
+	rd := ansi.NewScanner(bytes.NewReader(t.out.Bytes()))
 
 	for {
-		val, err := rd.ReadEscape()
+		val, err := rd.Scan()
 		if err != nil {
 			break
 		}

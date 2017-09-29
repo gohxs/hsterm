@@ -54,9 +54,11 @@ func main() {
 	// TERM UTILS SETUP
 	t := termu.New()
 	t.SetPrompt("stdio@termu ~$ ")
-	t.AutoComplete = buildAutoComplete(t)
-	t.Display = buildDisplay(t)
 	t.Log = prettylog.New("", dbgFile) // Debug logger that sends to F
+
+	ce := ComplEngine{term: t}
+	t.AutoComplete = ce.AutoComplete
+	t.Display = ce.Display
 
 	t.History.Append("char - 1000")
 	t.History.Append("pb &")
@@ -135,11 +137,92 @@ func asyncRepeat(t *termu.Term, cmds []string) {
 			<-time.After(time.Duration(delay) * time.Millisecond)
 		}
 	}()
-
 }
 
-// Global tab
-var tab = 0
+type ComplEngine struct {
+	term    *termu.Term
+	tab     int
+	suggest []string // suggestions, maybe not needed
+}
+
+func (c *ComplEngine) Display(in string) string {
+	if len(in) == 0 { // pass right throuh its a 0
+		return in
+	}
+	first, rest := "", ""
+	n := utilSplit(in, " ", &first, &rest)
+	if n == 2 {
+		rest = " " + rest
+	}
+
+	list := histMatchList(c.term, in)
+	if len(list) == 0 {
+		//sub display here
+		return highlight(first + rest)
+		//return "\033[01;31m" + first + "\033[0;36m" + rest + "\033[m"
+	}
+	m := list[c.tab%len(list)] // Select one from list
+	res := highlight(first+rest) + "\033[01;30m" + m[len(in):] + "\033[m"
+
+	res += "\n"
+	for i, v := range list {
+		if i == c.tab%len(list) {
+			res += "\033[7m" + v + "\t\033[m"
+			continue
+		}
+		res += v + "\t"
+	}
+	return res
+}
+
+func (c *ComplEngine) AutoComplete(line string, pos int, key rune) (newLine string, newPos int, ok bool) {
+	c.term.Log.Println("History list:", c.term.History.List())
+	if key != '\t' {
+		c.tab = 0
+		return
+	}
+	c.tab++
+
+	list := histMatchList(c.term, line)
+	if len(list) == 0 { // no match just return
+		return
+	}
+
+	res := list[0]
+	if len(list) > 1 { // one match only
+		res = ""
+		// Complete the common chars in list
+	colFor:
+		for i := 0; ; i++ {
+			if i >= len(list[0]) {
+				break
+			}
+			c := list[0][i]
+			for _, v := range list[1:] {
+				if i >= len(v) || c != v[i] {
+					break colFor
+				}
+			}
+			res += string(c)
+		}
+	}
+
+	// Complete only until space if we are in a space move forward
+	for pos < len(res) && res[pos] == ' ' { // CountSpace
+		pos++
+	}
+	space := strings.Index(res[pos:], " ") // current position forward
+
+	if space > 0 { // only positive space
+		res = res[:pos+space] + " "
+	}
+	if res != line { // reset tab if line changed
+		c.tab = 0
+	}
+	// Go to next space only
+	return res, len(res), true
+	// End complete
+}
 
 func histMatchList(t *termu.Term, in string) []string {
 	if len(in) == 0 {
@@ -154,98 +237,6 @@ func histMatchList(t *termu.Term, in string) []string {
 		}
 	}
 	return ret
-}
-
-func buildDisplay(t *termu.Term) func(string) string {
-	return func(in string) string {
-		if len(in) == 0 { // pass right throuh its a 0
-			return in
-		}
-		first, rest := "", ""
-		n := utilSplitN(in, " ", &first, &rest)
-		if n == 2 {
-			rest = " " + rest
-		}
-
-		list := histMatchList(t, in)
-		if len(list) == 0 {
-			//sub display here
-			return highlight(first + rest)
-			//return "\033[01;31m" + first + "\033[0;36m" + rest + "\033[m"
-		}
-		m := list[tab%len(list)] // Select one from list
-		return highlight(first+rest) + "\033[01;30m" + m[len(in):] + "\033[m"
-		//return "\033[01;37m" + first + "\033[0;36m" + rest + "\033[01;30m" + m[len(in):] + "\033[m"
-	}
-
-}
-
-func buildAutoComplete(t *termu.Term) func(string, int, rune) (string, int, bool) {
-	return func(line string, pos int, key rune) (newLine string, newPos int, ok bool) {
-		if key != '\t' {
-			tab = 0
-			return
-		}
-		tab++
-
-		buf := bytes.NewBuffer(nil)
-
-		list := histMatchList(t, line)
-		fmt.Fprint(buf, fmt.Sprintf("\033[%dB", t.PromptLineCount()+1))
-		for i, v := range list {
-			//utilSplitN(v, " ", &first) // Parse scan??
-			if i == tab%len(list) {
-				fmt.Fprintf(buf, "\033[7m")
-			}
-			fmt.Fprintf(buf, "%s\033[m\t", v)
-		}
-		fmt.Fprintln(buf)
-
-		t.Write(buf.Bytes())
-		//if len(line) == 0 { // Maybe we can show a list splited by first char
-		//	return
-		//}
-
-		// Prefix match
-		//list := histMatchList(t, line)
-		if len(list) == 0 { // no match just return
-			return
-		}
-
-		res := list[0]
-		if len(list) > 1 { // one match only
-			res = ""
-			// Complete the common chars in list
-		colFor:
-			for i := 0; ; i++ {
-				if i >= len(list[0]) {
-					break
-				}
-				c := list[0][i]
-				for _, v := range list[1:] {
-					if i >= len(v) || c != v[i] {
-						break colFor
-					}
-				}
-				res += string(c)
-			}
-		}
-
-		// Complete only until space if we are in a space move forward
-		for pos < len(res) && res[pos] == ' ' { // CountSpace
-			pos++
-		}
-		space := strings.Index(res[pos:], " ") // current position forward
-
-		if space > 0 { // only positive space
-			res = res[:pos+space] + " "
-		}
-		if res != line { // reset tab if line changed
-			tab = 0
-		}
-		// Go to next space only
-		return res, len(res), true
-	} // End complete
 }
 
 func highlight(input string) string {
@@ -299,7 +290,7 @@ var _ = styles.Register(chroma.MustNewStyle("monokaim", chroma.StyleEntries{
 }))
 
 // Utility
-func utilSplitN(s string, sep string, targets ...*string) (n int) {
+func utilSplit(s string, sep string, targets ...*string) (n int) {
 	N := len(targets)
 	res := strings.SplitN(s, sep, N)
 	n = len(res)

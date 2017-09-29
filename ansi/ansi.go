@@ -1,5 +1,10 @@
 package ansi
 
+import (
+	"bytes"
+	"strings"
+)
+
 var (
 	defValue = Value{}
 )
@@ -21,4 +26,20 @@ type Value struct { // We can add extra values in case of ascii parse
 	Attr []int
 	// Key value
 	Value string
+}
+
+//Strip ansi from string
+func Strip(in string) string {
+	buf := bytes.NewBuffer(nil)
+	scanner := NewScanner(strings.NewReader(in))
+	for {
+		val, err := scanner.Scan()
+		if err != nil {
+			break
+		}
+		if val.Type == TypeRune {
+			buf.WriteString(val.Value)
+		}
+	}
+	return buf.String()
 }
