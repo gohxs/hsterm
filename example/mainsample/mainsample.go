@@ -142,6 +142,7 @@ func asyncRepeat(t *termu.Term, cmds []string) {
 type ComplEngine struct {
 	term    *termu.Term
 	tab     int
+	mode    int
 	suggest []string // suggestions, maybe not needed
 }
 
@@ -154,56 +155,75 @@ func (c *ComplEngine) Display(in string) string {
 	if n == 2 {
 		rest = " " + rest
 	}
-
-	list := histMatchList(c.term, in)
-	if len(list) == 0 {
-		//sub display here
+	if len(c.suggest) == 0 {
 		return highlight(first + rest)
-		//return "\033[01;31m" + first + "\033[0;36m" + rest + "\033[m"
 	}
-	m := list[c.tab%len(list)] // Select one from list
+	m := c.suggest[c.tab%len(c.suggest)] // Select one from list
 	res := highlight(first+rest) + "\033[01;30m" + m[len(in):] + "\033[m"
 
+	if c.mode != 1 {
+		return res
+	}
 	res += "\n"
-	for i, v := range list {
-		if i == c.tab%len(list) {
-			res += "\033[7m" + v + "\t\033[m"
+	for i, v := range c.suggest {
+		var treated string
+		fmt.Sscanf(v[len(in):], "%s", &treated)
+		if i == c.tab%len(c.suggest) {
+			res += "\033[7m" + treated + "\t\033[m"
 			continue
 		}
-		res += v + "\t"
+		res += treated + "\t"
 	}
 	return res
 }
 
+// Any typing should show this right?
+// Hijacking function
 func (c *ComplEngine) AutoComplete(line string, pos int, key rune) (newLine string, newPos int, ok bool) {
-	c.term.Log.Println("History list:", c.term.History.List())
+	if key == '\n' && c.mode == 1 { // Wont happen?
+		c.mode = 0
+		if len(c.suggest) == 0 {
+			return
+		}
+		sugLine := c.suggest[c.tab%len(c.suggest)]
+		if line == sugLine {
+			return
+		}
+		newLine = sugLine
+		newPos = len(newLine)
+		ok = true
+		return
+	}
+
 	if key != '\t' {
+		c.suggest = histMatchList(c.term, line+string(key)) // On type
 		c.tab = 0
 		return
 	}
+	c.mode = 1
 	c.tab++
 
-	list := histMatchList(c.term, line)
-	if len(list) == 0 { // no match just return
+	c.suggest = histMatchList(c.term, line) // On type
+	if len(c.suggest) == 0 {                // no match just return
 		return
 	}
 
-	res := list[0]
-	if len(list) > 1 { // one match only
+	res := c.suggest[0]
+	if len(c.suggest) > 1 { // one match only
 		res = ""
 		// Complete the common chars in list
 	colFor:
 		for i := 0; ; i++ {
-			if i >= len(list[0]) {
+			if i >= len(c.suggest[0]) {
 				break
 			}
-			c := list[0][i]
-			for _, v := range list[1:] {
-				if i >= len(v) || c != v[i] {
+			cur := c.suggest[0][i]
+			for _, v := range c.suggest[1:] {
+				if i >= len(v) || cur != v[i] {
 					break colFor
 				}
 			}
-			res += string(c)
+			res += string(cur)
 		}
 	}
 

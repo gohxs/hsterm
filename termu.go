@@ -43,7 +43,7 @@ type Term struct {
 	tstate *termutils.State
 
 	reading bool
-	addLine int
+	endChar string
 
 	inReader  io.Reader
 	outWriter io.Writer
@@ -63,7 +63,6 @@ func New() *Term {
 		writer = os.Stdout // pure stdout?
 
 	}
-
 	ret := &Term{
 		Display:      nil,
 		AutoComplete: nil,
@@ -71,6 +70,7 @@ func New() *Term {
 		width:   0,
 		History: &history{}, // Wrong why?
 		Log:     prettylog.Dummy(),
+		endChar: "\r",
 
 		// TODO: Way to change this
 		inReader:  os.Stdin,
@@ -145,9 +145,21 @@ func (t *Term) ReadLine() (string, error) {
 			continue
 		case "\x03": // CtrlC
 			return "", ErrInterrupt // Interrupt return
-		case "\r", "\n": // ENTER COMPLETE enter // Process input
+		case t.endChar: // ENTER COMPLETE enter // Process input
+			if t.AutoComplete != nil { // Perform complete on enter
+				newLine, newPos, ok := t.AutoComplete(t.prompt.InputString(), t.prompt.Cursor(), '\n')
+				if ok {
+					t.prompt.SetInput(newLine) // Reset print here?
+					t.prompt.SetCursor(newPos) // Do nothing
+					t.out.WriteString(t.prompt.DisplayString())
+					t.Flush()
+					continue
+					//break
+				}
+			}
+
 			//t.prompt.CursorToEnd() // Index to end of prompt what if?
-			t.addLine = 0
+			t.prompt.extraLine = 0
 			t.out.WriteString("\n")                   // Line feed directly
 			ansi.NewHelperDirect(&t.out).SaveCursor() // ansi for just save cursor?
 			t.Flush()                                 // Send to terminal
@@ -212,9 +224,9 @@ func (t *Term) Write(b []byte) (n int, err error) {
 	if len(b) == 0 {
 		return 0, nil
 	}
-	t.addLine = 0
+	t.prompt.extraLine = 0
 	if b[len(b)-1] != '\n' { // Prompt will show below the last cursor in next print
-		t.addLine = 1
+		t.prompt.extraLine = 1
 	}
 	if !t.reading { //Pass through
 		n, err = t.out.Write(b)
