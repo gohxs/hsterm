@@ -23,6 +23,26 @@ import (
 var (
 	// ErrInterrupt Interrupt called
 	ErrInterrupt = errors.New("Interrupt")
+	ErrEOF       = errors.New("EOF")
+)
+
+// Virtual keys
+const (
+	AKCtrlA       rune = 1
+	AKInterrupt        = 0x3
+	AKeot              = 0x4
+	AKBackspace        = 0x8
+	AKEnter            = 0xD
+	AKClearScreen      = 0xC
+
+	AKDelete = 0xED00 + iota
+	AKWordForward
+	AKWordBack
+	AKHistPrev
+	AKHistNext
+	AKCursLeft
+	AKCursRight
+	AKShiftTab
 )
 
 // TermFunc callback for receiving a command
@@ -42,6 +62,7 @@ type Term struct {
 	tstate *termutils.State
 
 	reading bool
+
 	endChar string
 
 	inReader  io.Reader
@@ -126,33 +147,39 @@ func (t *Term) ReadLine() (string, error) {
 		}
 		// Do some keyMapping, (i.e: MoveNext: "\t")
 		// Plugable Modes like the readline
+		// transform val to key
+		ch := mapKey(val)
 
+		// Do handle Key operation here
 		// Select handler here
 		//
 		// Non clear
-		switch val.Value {
-		case "\x15": // CtrlU
+		switch ch {
+		case '\x15': // CtrlU
 			t.Write([]byte("\033[H"))
-		case "\x0C": // CtrlL
+		case AKClearScreen: // CtrlL
 			ab := ansi.NewHelperDirect(&t.out)
-			ab.WriteString("\033[2J\033[H") // Clear and save?
-			//ab.SaveCursor()
+			ab.ClearScreen()
+			ab.Move(0, 0)
+			//ab.WriteString("\033[2J\033[H") // Clear and save?
+			ab.SaveCursor()
 			t.Flush()
+		case AKeot: //EOT // CtrlD
+			if len(t.prompt.InputString()) == 0 {
+				return "", ErrEOF
+			}
+			t.prompt.Delete()
 
-		case "\x04": //EOT // CtrlD
-			t.out.WriteString(t.prompt.DisplayString()) // Get String
-			continue
-		case "\x03": // CtrlC
+		case AKInterrupt: // CtrlC
 			return "", ErrInterrupt // Interrupt return
-		case t.endChar: // ENTER COMPLETE enter // Process input
+		// Sequence
+		case AKEnter: // ENTER COMPLETE enter // Process input
 			if t.AutoComplete != nil { // Perform complete on enter
 				newLine, newPos, ok := t.AutoComplete(t.prompt.InputString(), t.prompt.Cursor(), '\n')
 				if ok {
 					t.prompt.SetInput(newLine) // Reset print here?
 					t.prompt.SetCursor(newPos) // Do nothing
-					t.out.WriteString(t.prompt.DisplayString())
-					t.Flush()
-					continue
+					break
 					//break
 				}
 			}
@@ -163,9 +190,7 @@ func (t *Term) ReadLine() (string, error) {
 			//ansi.NewHelperDirect(&t.out).SaveCursor() // ansi for just save cursor?
 			t.Flush() // Send to terminal
 			if t.prompt.Len() == 0 {
-				t.out.WriteString(t.prompt.DisplayString()) // Reprint prompt
-				t.Flush()                                   // Send to terminal
-				continue
+				break
 			}
 			// Append history
 			t.History.Append(t.prompt.InputString())
@@ -173,45 +198,44 @@ func (t *Term) ReadLine() (string, error) {
 			line := t.prompt.InputString()
 			t.prompt.Clear()
 			return line, nil
-		}
-
-		switch val.Value {
-		case "\033f": // Word back
+		case AKWordForward: // Word back
 			t.prompt.CursorWordForward()
-		case "\033b": // Word back
+		case AKWordBack: // Word back
 			t.prompt.CursorWordBack()
-		case "\033[3~": // Escape key delete Weird keys
+		case AKDelete: // Escape key delete Weird keys
 			t.prompt.Delete()
-		case "\b", "\x7f":
+		case AKBackspace:
 			t.prompt.Backspace()
-		case "\033[A", "\x10": // Up or CtrlP
+		case AKHistPrev:
 			t.prompt.SetInput(t.History.Prev(t.prompt.InputString()))
-		case "\033[B", "\x0E": // Down or CtrlN
+		case AKHistNext:
 			t.prompt.SetInput(t.History.Next(t.prompt.InputString()))
-		case "\033[D", "\x02": // left or CtrlB
+		case AKCursLeft:
 			t.prompt.CursorLeft()
-		case "\033[C", "\x06": // Right or ctrlF
+		case AKCursRight:
 			t.prompt.CursorRight()
 		default: // Function that actually adds the text
 			if val.Type != ansi.TypeRune {
-				continue
+				break
 			}
-			ch, _ := utf8.DecodeRuneInString(val.Value)
+			//ch, _ := utf8.DecodeRuneInString(val.Value)
 			// Go through auto complete
 			complete := false
-			if t.AutoComplete != nil {
-				newLine, newPos, ok := t.AutoComplete(t.prompt.InputString(), t.prompt.Cursor(), ch)
-				if ok {
-					t.prompt.SetInput(newLine) // Reset print here?
-					t.prompt.SetCursor(newPos)
-					complete = true
-					//break
-				}
-			}
 			if !complete && unicode.IsPrint(ch) { // Do not add the tab
 				t.prompt.WriteString(val.Value)
 			}
 		}
+
+		// Auto completer
+		if t.AutoComplete != nil {
+			newLine, newPos, ok := t.AutoComplete(t.prompt.InputString(), t.prompt.Cursor(), ch)
+			if ok {
+				t.prompt.SetInput(newLine) // Reset print here?
+				t.prompt.SetCursor(newPos)
+				//break
+			}
+		}
+
 		// Lock here
 		t.out.WriteString(t.prompt.DisplayString())
 		t.Flush()
@@ -252,16 +276,16 @@ func (t *Term) Write(b []byte) (n int, err error) {
 	return
 }
 
-//GetSize get terminal size returns 0,0 on error
+//GetSize get terminal size returns 1,1 (minimal) on error
 func (t *Term) GetSize() (w int, h int) {
 	f, ok := t.outWriter.(*os.File)
 	if !ok {
-		return
+		return 80, 25 // default unknown size
 	}
 
 	iw, ih, err := termutils.GetSize(int(f.Fd()))
 	if err != nil {
-		return
+		return 80, 25
 	}
 
 	return iw, ih
@@ -320,4 +344,35 @@ func (t *Term) Flush() {
 	t.out.Reset()
 
 	// Flush into screen
+}
+
+// Key/Input mapper
+func mapKey(val ansi.Value) rune {
+	var ch rune
+	switch val.Value {
+	case "\x0C":
+		ch = AKClearScreen
+	case "\033f":
+		ch = AKWordForward
+	case "\033b":
+		ch = AKWordBack
+	case "\b", "\x7f":
+		ch = AKBackspace
+	case "\033[A", "\x10": // Up or CtrlP
+		ch = AKHistPrev
+	case "\033[B", "\x0E": // Down or CtrlN
+		ch = AKHistNext
+	case "\033[D", "\x02": // left or CtrlB
+		ch = AKCursLeft
+	case "\033[C", "\x06": // Right or ctrlF
+		ch = AKCursRight
+	case "\033[Z": // Right or ctrlF
+		ch = AKShiftTab
+	case "\033[3~":
+		ch = AKDelete
+	default:
+		ch, _ = utf8.DecodeRuneInString(val.Value)
+	}
+	return ch
+
 }

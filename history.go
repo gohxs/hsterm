@@ -7,12 +7,14 @@ type History interface {
 	Prev(string) string
 	Next(string) string
 	List() []string
+	String() string // current item
 }
 
 // History lined history
 type history struct {
 	index   int
 	history []string
+	buf     string
 }
 
 func (h *history) Append(item string) {
@@ -31,24 +33,30 @@ func (h *history) Append(item string) {
 	h.index = len(h.history)
 }
 
-func (h *history) Prev(string) string {
+func (h *history) Prev(line string) string {
+	if h.index == len(h.history) {
+		h.buf = line
+	}
 	h.index = min(h.index-1, 0)
 	return h.String()
 }
-func (h *history) Next(string) string {
+func (h *history) Next(line string) string {
 	h.index++
 	if h.index >= len(h.history) {
 		h.index = len(h.history)
-		return ""
+		return h.buf
 	}
 	return h.String()
+}
+func (h *history) Last(last string) {
+	h.buf = last
 }
 func (h *history) List() []string {
 	return h.history
 }
 
 func (h *history) String() string {
-	if len(h.history) == 0 {
+	if len(h.history) == 0 || h.index == len(h.history) {
 		return ""
 	}
 	return h.history[h.index]

@@ -54,7 +54,7 @@ func NewStdoutWriter(w io.Writer) (io.Writer, error) {
 	}
 
 	// Lets emulate always for testing
-	return &stdoutWriter{Writer: w, fd: uintptr(fd), lastColor: 0x7}, nil // Emulated
+	//return &stdoutWriter{Writer: w, fd: uintptr(fd), lastColor: 0x7}, nil // Emulated
 
 	st, err := GetState(fd)
 	if err != nil {

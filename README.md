@@ -13,9 +13,11 @@ Readline, Ansi parser, ansi writer for windows
 
 TODO
 ----------
+* [~] PRI: Create the Virtual Key rune based on unicode PUA
+  * [ ] keys are mapped, in testing
 * [ ] Instead of readline, we can do a Scanner
 * [ ] Package organization
-  * [ ] Merge termu/term with termu/term/termutils into one
+  * [X] Merge termu/term with termu/term/termutils into one
   * [ ] NewStdoutWriter should be renamed or restructured to NewTerminalWriter?
 * [ ] 256/16m to 16 color translator for windows or check terminal support for
   more colors
@@ -24,17 +26,18 @@ TODO
 * [ ] Fish alike fuzzy search of history
   * [X] Created an example of how it would be implemented, earlier version
 * [X] Char cursor memory instead of line output
-* Create and rearrange windows Term
+* WINDOWS Create and rearrange Term
   * [X] Writer wrapper
   * [X] Movement Esc
   * [X] Colors
   * [X] Cleaners \x1B[J and \x1B[K
   * [X] Cursor visibility (but blinks alot)
   * [X] Issue on last column on windows
-  * [ ] Windows suports VT by passing necessary flags to output, check
+  * [X] Windows suports VT by passing necessary flags to output, check
     the possibility on input
     [setconsolemode](https://docs.microsoft.com/en-us/windows/console/setconsolemode)
-  * [ ] Check windows version or capability of the VT flag
+  * [X] Check windows version or capability of the VT flag
+  * [ ] Support Shift tab
 * Handle unicode/double width chars (Partial)
   * [X] Print unicode
   * [X] String manipulation

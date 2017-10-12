@@ -25,17 +25,6 @@ func (p *Prompt) SetPrompt(prompt string) {
 	p.prompt = prompt
 }
 
-//PromptLineCount helper to count wrapping lines
-/*func (p *Prompt) LineCount() int {
-	//Count \n chars too
-	width := 1
-	if p.term.width > 0 {
-		width = p.term.width
-	}
-	// Perform display here too
-
-	return ((p.InputBuffer.Len() + len(p.prompt)) / width) + 1 // Always one line
-}*/
 func (p *Prompt) String(a, b error) {}
 
 //TODO: This should be private

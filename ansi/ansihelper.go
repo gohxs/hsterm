@@ -79,6 +79,9 @@ func (w *Helper) MoveRight(n int) {
 	}
 	fmt.Fprintf(w, "\033[%dC", n)
 }
+func (w *Helper) Move(lines, cols int) {
+	fmt.Fprintf(w, "\033[%d;%dH", lines, cols)
+}
 
 func (w *Helper) ClearLineToEnd() {
 	w.WriteString("\033[K")
