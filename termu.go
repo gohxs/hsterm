@@ -107,6 +107,9 @@ func (t *Term) ReadLine() (string, error) {
 	// If it is the bufio.Reader we pass through
 	if reader, ok := t.Reader.(*bufio.Reader); ok {
 		buf, _, err := reader.ReadLine()
+		if err == io.EOF {
+			err = ErrEOF
+		}
 		return string(buf), err
 	}
 
