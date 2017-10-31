@@ -20,8 +20,8 @@ import (
 	"github.com/gohxs/termu/termutils"
 )
 
+// Errors
 var (
-	// ErrInterrupt Interrupt called
 	ErrInterrupt = errors.New("Interrupt")
 	ErrEOF       = errors.New("EOF")
 )
@@ -63,26 +63,26 @@ type Term struct {
 
 	reading bool
 
-	endChar string
-
-	inReader  io.Reader
-	outWriter io.Writer
-
 	Reader io.Reader
 	Writer io.Writer
-	// Stderr in future
-
-	//inFile *os.File // io.Reader
-	//m sync.Mutex
 }
 
 //New instantiates a new Terminal handler
 func New() *Term {
-	writer, err := termutils.NewStdoutWriter(os.Stdout)
+	// Setup the Read and Writer
+	writer, err := termutils.NewStdoutWriter(os.Stderr)
 	if err != nil {
-		writer = os.Stdout // pure stdout?
-
+		writer = os.Stdout
 	}
+
+	reader := io.Reader(termutils.NewStdinReader(os.Stdin))
+	ifile, ok := reader.(*os.File)
+	// if is not a file or is a file but not a terminal
+	// We set our reader as a bufio.Reader
+	if !ok || (ok && !termutils.IsTerminal(int(ifile.Fd()))) {
+		reader = bufio.NewReader(reader)
+	}
+
 	ret := &Term{
 		Display:      nil,
 		AutoComplete: nil,
@@ -90,16 +90,10 @@ func New() *Term {
 		width:   1,
 		History: &history{}, // Wrong why?
 		Log:     prettylog.Dummy(),
-		endChar: "\r",
-
-		// TODO: Way to change this
-		inReader:  os.Stdin,
-		outWriter: os.Stdout, // Why?
 
 		// Accept readwriter like golang.org/x/crypt/ssh/terminal
-		Reader: termutils.NewStdinReader(os.Stdin), // Reader
-		Writer: writer,                             // TODO: for now
-		//m:      sync.Mutex{},
+		Reader: reader,
+		Writer: writer,
 	}
 	ret.prompt = newPrompt(ret)
 
@@ -110,19 +104,19 @@ func New() *Term {
 // (i.e: a line is readed)
 func (t *Term) ReadLine() (string, error) {
 
-	ifile, ok := t.inReader.(*os.File)
-	if !ok || (ok && !termutils.IsTerminal(int(ifile.Fd()))) {
-		reader := bufio.NewReader(t.Reader)
+	// If it is the bufio.Reader we pass through
+	if reader, ok := t.Reader.(*bufio.Reader); ok {
 		buf, _, err := reader.ReadLine()
-		if err == io.EOF {
-			if len(buf) != 0 {
-				err = nil
-			} else {
-				err = ErrEOF
-			}
-		}
 		return string(buf), err
 	}
+
+	// If reaches here and is not a file,
+	// something was tampered or wrong
+	ifile, ok := t.Reader.(*os.File)
+	if !ok {
+		// Error?
+	}
+
 	t.width, _ = t.GetSize() // Update width actually
 
 	// It is a file
@@ -147,8 +141,8 @@ func (t *Term) ReadLine() (string, error) {
 	rinput := ansi.NewScanner(reader)
 
 	for {
-		t.width, _ = t.GetSize() // Update width actually
-		val, err := rinput.Scan()
+		t.width, _ = t.GetSize()  // Update width actually
+		val, err := rinput.Scan() // Ansi scanner
 		if err != nil {
 			return "", err
 		}
@@ -193,7 +187,7 @@ func (t *Term) ReadLine() (string, error) {
 		case AKInterrupt: // CtrlC
 			return "", ErrInterrupt // Interrupt return
 		// Sequence
-		case AKEnter: // ENTER COMPLETE enter // Process input
+		case AKEnter, '\n': // ENTER COMPLETE enter // Process input
 			//t.prompt.CursorToEnd() // Index to end of prompt what if?
 			t.prompt.extraLine = 0
 			t.out.WriteString("\n") // Line feed directly
@@ -288,7 +282,7 @@ func (t *Term) Write(b []byte) (n int, err error) {
 
 //GetSize get terminal size returns 1,1 (minimal) on error
 func (t *Term) GetSize() (w int, h int) {
-	f, ok := t.outWriter.(*os.File)
+	f, ok := t.Writer.(*os.File)
 	if !ok {
 		return 80, 25 // default unknown size
 	}
