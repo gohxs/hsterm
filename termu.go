@@ -87,7 +87,7 @@ func New() *Term {
 		Display:      nil,
 		AutoComplete: nil,
 		// Internals
-		width:   0,
+		width:   1,
 		History: &history{}, // Wrong why?
 		Log:     prettylog.Dummy(),
 		endChar: "\r",
@@ -109,14 +109,21 @@ func New() *Term {
 // ReadLine will wait for further input until results is satisfie
 // (i.e: a line is readed)
 func (t *Term) ReadLine() (string, error) {
-	t.width, _ = t.GetSize() // Update width actually
 
 	ifile, ok := t.inReader.(*os.File)
 	if !ok || (ok && !termutils.IsTerminal(int(ifile.Fd()))) {
 		reader := bufio.NewReader(t.Reader)
 		buf, _, err := reader.ReadLine()
+		if err == io.EOF {
+			if len(buf) != 0 {
+				err = nil
+			} else {
+				err = ErrEOF
+			}
+		}
 		return string(buf), err
 	}
+	t.width, _ = t.GetSize() // Update width actually
 
 	// It is a file
 	state, err := termutils.MakeRaw(int(ifile.Fd()))
@@ -150,6 +157,19 @@ func (t *Term) ReadLine() (string, error) {
 		// transform val to key
 		ch := mapKey(val)
 
+		if t.AutoComplete != nil { // Perform complete on enter
+			newLine, newPos, ok := t.AutoComplete(t.prompt.InputString(), t.prompt.Cursor(), ch)
+			if ok {
+				t.prompt.SetInput(newLine) // Reset print here?
+				t.prompt.SetCursor(newPos) // Do nothing
+				t.out.WriteString(t.prompt.DisplayString())
+				t.Flush()
+				//log.Printf("D: %#v", ch)
+				continue
+				//break
+			}
+		}
+
 		// Do handle Key operation here
 		// Select handler here
 		//
@@ -174,16 +194,6 @@ func (t *Term) ReadLine() (string, error) {
 			return "", ErrInterrupt // Interrupt return
 		// Sequence
 		case AKEnter: // ENTER COMPLETE enter // Process input
-			if t.AutoComplete != nil { // Perform complete on enter
-				newLine, newPos, ok := t.AutoComplete(t.prompt.InputString(), t.prompt.Cursor(), '\n')
-				if ok {
-					t.prompt.SetInput(newLine) // Reset print here?
-					t.prompt.SetCursor(newPos) // Do nothing
-					break
-					//break
-				}
-			}
-
 			//t.prompt.CursorToEnd() // Index to end of prompt what if?
 			t.prompt.extraLine = 0
 			t.out.WriteString("\n") // Line feed directly
@@ -227,14 +237,14 @@ func (t *Term) ReadLine() (string, error) {
 		}
 
 		// Auto completer
-		if t.AutoComplete != nil {
+		/*if t.AutoComplete != nil {
 			newLine, newPos, ok := t.AutoComplete(t.prompt.InputString(), t.prompt.Cursor(), ch)
 			if ok {
 				t.prompt.SetInput(newLine) // Reset print here?
 				t.prompt.SetCursor(newPos)
 				//break
 			}
-		}
+		}*/
 
 		// Lock here
 		t.out.WriteString(t.prompt.DisplayString())

@@ -13,8 +13,10 @@ Readline, Ansi parser, ansi writer for windows
 
 TODO
 ----------
-* [~] PRI: Create the Virtual Key rune based on unicode PUA
-  * [ ] keys are mapped, in testing
+
+* [ ] Lower level Key handler instead of operating in autocompleter
+* [ ] PRI: Create the Virtual Key rune based on unicode PUA
+  * [X] keys are mapped, in testing
 * [ ] Instead of readline, we can do a Scanner
 * [ ] Package organization
   * [X] Merge termu/term with termu/term/termutils into one
@@ -44,7 +46,7 @@ TODO
   * [ ] Cursor manipulation runeWidth
 * [ ] Prepare completer maybe (readline)
 * [X] History search (readline)
-  * kind of since it is workign like shell who needs history back search?
+  * kind of since it is working like shell who needs history back search?
 * [X] Project rename, hsterm was *not* a good name
 * [X] Show a progress bar and prompt at same time
 * [X] ansi.Reader is now ansi.Scanner

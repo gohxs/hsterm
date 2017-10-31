@@ -6,8 +6,6 @@ import (
 	"runtime"
 	"strings"
 	"time"
-
-	_ "github.com/gohxs/prettylog"
 )
 
 func min(n, min int) int {
