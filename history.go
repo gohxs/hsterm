@@ -1,6 +1,8 @@
 package termu
 
-import "strings"
+import (
+	"strings"
+)
 
 type History interface {
 	Append(string)
@@ -23,9 +25,10 @@ func (h *history) Append(item string) {
 	if len(item) == 0 {
 		return
 	}
+	h.index = len(h.history) // Set to last
 	if len(h.history) > 0 {
 		last := h.history[len(h.history)-1]
-		if item == last { // Ignore if equal
+		if item == last { // Ignore if it is the same as last one
 			return
 		}
 	}
